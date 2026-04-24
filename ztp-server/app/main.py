@@ -42,12 +42,29 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ZTP Server", lifespan=lifespan)
+app = FastAPI(
+    title="ZTP Server API",
+    description=(
+        "Backend API for the Arista cEOS ZTP demo. Serves the cEOS-facing "
+        "ZTP endpoints (`/ztp/bootstrap.sh`, `/configs/<host>.cfg`, `/log`) "
+        "as well as the JSON API consumed by the React dashboard."
+    ),
+    version="0.1.0",
+    lifespan=lifespan,
+    openapi_tags=[
+        {"name": "ztp", "description": "Endpoints called by cEOS during ZTP."},
+        {"name": "devices", "description": "Inventory + per-device actions (re-provision)."},
+        {"name": "configs", "description": "Per-host EOS configs served by ZTP. Editable."},
+        {"name": "leases", "description": "DHCP pool view (parsed from dnsmasq.leases)."},
+        {"name": "events", "description": "ZTP event log persisted in SQLite."},
+        {"name": "stream", "description": "Server-Sent Events fan-out for live dashboard updates."},
+    ],
+)
 
 
 # ---------- ZTP-facing endpoints (consumed by cEOS) ----------
 
-@app.get("/ztp/bootstrap.sh", response_class=PlainTextResponse)
+@app.get("/ztp/bootstrap.sh", response_class=PlainTextResponse, tags=["ztp"])
 def ztp_bootstrap():
     p = CONTENT_ROOT / "ztp" / "bootstrap.sh"
     if not p.exists():
@@ -55,7 +72,7 @@ def ztp_bootstrap():
     return PlainTextResponse(p.read_text(), media_type="text/plain")
 
 
-@app.get("/configs/{name}", response_class=PlainTextResponse)
+@app.get("/configs/{name}", response_class=PlainTextResponse, tags=["ztp"])
 def ztp_config(name: str):
     if not name.endswith(".cfg"):
         raise HTTPException(400, "name must end with .cfg")
@@ -68,7 +85,7 @@ def ztp_config(name: str):
     return PlainTextResponse(p.read_text(), media_type="text/plain")
 
 
-@app.api_route("/log", methods=["GET", "POST"])
+@app.api_route("/log", methods=["GET", "POST"], tags=["ztp"])
 async def ztp_log(request: Request):
     host = request.query_params.get("host", "unknown")
     event = request.query_params.get("event", "unknown")
@@ -80,7 +97,7 @@ async def ztp_log(request: Request):
 
 # ---------- API: inventory, configs, leases, events ----------
 
-@app.get("/api/devices")
+@app.get("/api/devices", tags=["devices"])
 def api_devices():
     summaries = {s["host"]: s for s in db.host_summaries()}
     nodes = docker_ctl.list_ceos_nodes()
@@ -95,7 +112,7 @@ def api_devices():
     return out
 
 
-@app.get("/api/configs")
+@app.get("/api/configs", tags=["configs"])
 def api_configs():
     cfg_dir = CONTENT_ROOT / "configs"
     if not cfg_dir.exists():
@@ -112,7 +129,7 @@ def api_configs():
     return out
 
 
-@app.get("/api/configs/{host}")
+@app.get("/api/configs/{host}", tags=["configs"])
 def api_config_get(host: str):
     if not HOST_RE.match(host):
         raise HTTPException(400, "invalid host")
@@ -126,7 +143,7 @@ class ConfigUpdate(BaseModel):
     content: str
 
 
-@app.put("/api/configs/{host}")
+@app.put("/api/configs/{host}", tags=["configs"])
 async def api_config_put(host: str, body: ConfigUpdate):
     if not HOST_RE.match(host):
         raise HTTPException(400, "invalid host")
@@ -136,7 +153,7 @@ async def api_config_put(host: str, body: ConfigUpdate):
     return {"ok": True, "size": p.stat().st_size}
 
 
-@app.post("/api/devices/{host}/reprovision")
+@app.post("/api/devices/{host}/reprovision", tags=["devices"])
 async def api_device_reprovision(host: str):
     try:
         result = docker_ctl.reprovision(host)
@@ -148,19 +165,19 @@ async def api_device_reprovision(host: str):
     return result
 
 
-@app.get("/api/leases")
+@app.get("/api/leases", tags=["leases"])
 def api_leases():
     return leases.pool_summary()
 
 
-@app.get("/api/events")
+@app.get("/api/events", tags=["events"])
 def api_events(limit: int = 200):
     return db.list_events(limit=limit)
 
 
 # ---------- SSE ----------
 
-@app.get("/api/stream")
+@app.get("/api/stream", tags=["stream"])
 async def api_stream(request: Request):
     queue: asyncio.Queue = asyncio.Queue(maxsize=64)
     _subscribers.add(queue)

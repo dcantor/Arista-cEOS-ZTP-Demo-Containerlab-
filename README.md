@@ -109,6 +109,15 @@ to its detail page.
 
 ![Event log](docs/screenshots/events.png)
 
+### API (Swagger)
+
+The toolbar's **API ↗** link opens FastAPI's auto-generated Swagger UI at
+`/docs`. Endpoints are grouped by tag (`ztp`, `devices`, `configs`,
+`leases`, `events`, `stream`) and each is "Try it out"-able directly from
+the page. The raw OpenAPI 3.1 schema is at `/openapi.json`.
+
+![API Swagger](docs/screenshots/api-swagger.png)
+
 ## Node / IP / config map
 
 | Node    | DHCP-assigned mgmt IP | Final mgmt IP   | Config                       |

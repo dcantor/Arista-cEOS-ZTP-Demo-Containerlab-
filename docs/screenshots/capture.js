@@ -10,6 +10,7 @@ const SHOTS = [
   { url: '/edit/spine1',       file: 'config-editor.png', wait: 2000 },
   { url: '/leases',            file: 'leases.png',        wait: 1500 },
   { url: '/events',            file: 'events.png',        wait: 1500 },
+  { url: '/docs',              file: 'api-swagger.png',   wait: 2500 },
 ];
 
 (async () => {
