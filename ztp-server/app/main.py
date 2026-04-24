@@ -462,10 +462,21 @@ async def api_stream(request: Request):
 if STATIC_ROOT.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_ROOT / "assets"), name="assets")
 
+    # index.html must never be cached: the JS/CSS it points to is a
+    # content-hashed Vite bundle, but if the browser keeps a stale
+    # index.html it'll keep loading the OLD bundle hash and never see
+    # new UI features. The /assets/* responses are still cacheable
+    # (their filenames change on every build), so we only no-store the
+    # SPA shell.
+    _NO_CACHE_HEADERS = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+    }
+
     @app.get("/{full_path:path}")
     def spa(full_path: str):
         # Reserved API/ZTP prefixes are handled above; anything else falls through here.
         index = STATIC_ROOT / "index.html"
         if not index.exists():
             return PlainTextResponse("UI not built", status_code=503)
-        return FileResponse(index)
+        return FileResponse(index, headers=_NO_CACHE_HEADERS)
