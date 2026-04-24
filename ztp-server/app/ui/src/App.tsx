@@ -30,11 +30,21 @@ export default function App() {
           <Link to="/" className="text-lg font-semibold tracking-tight">
             ZTP Server
           </Link>
-          <nav className="flex gap-1">
+          <nav className="flex gap-1 items-center">
             <NavItem to="/" label="Devices" />
             <NavItem to="/configs" label="Configs" />
             <NavItem to="/leases" label="DHCP" />
             <NavItem to="/events" label="Events" />
+            <a
+              href="/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2 rounded text-sm text-slate-300 hover:bg-slate-800 inline-flex items-center gap-1"
+              title="Open Swagger UI in a new tab"
+            >
+              API
+              <span aria-hidden className="text-[10px] opacity-60">↗</span>
+            </a>
           </nav>
         </div>
       </header>
