@@ -1,9 +1,7 @@
 LAB := ztp-universal-demo
 TOPO := topology.clab.yml
 
-CEOS := spine1,spine2,leaf1,leaf2
-
-.PHONY: help build build-dnsmasq build-app deploy destroy redeploy redeploy-ceos ps dhcp-logs app-logs ztp-events ui-dev cli-spine1 cli-spine2 cli-leaf1 cli-leaf2
+.PHONY: help build build-dnsmasq build-app deploy destroy redeploy ps dhcp-logs app-logs ztp-events ui-dev cli-spine1 cli-spine2 cli-leaf1 cli-leaf2
 
 help:
 	@echo "Targets:"
@@ -12,8 +10,7 @@ help:
 	@echo "  build-dnsmasq Build only the dnsmasq image"
 	@echo "  deploy        Bring up the ZTP lab (servers + 4 cEOS); UI on http://<host>:8080"
 	@echo "  destroy       Tear down the lab"
-	@echo "  redeploy      Destroy then deploy (everything)"
-	@echo "  re-ztp        Wipe startup-config and restart all 4 cEOS (servers stay up)"
+	@echo "  redeploy      Destroy then deploy (only way to re-run ZTP — see Limitations)"
 	@echo "  ps            Show lab containers and addresses"
 	@echo "  dhcp-logs     Tail dnsmasq logs (DHCP exchanges)"
 	@echo "  app-logs      Tail ztp-app (FastAPI) logs"
@@ -39,14 +36,6 @@ destroy:
 	sudo containerlab destroy -t $(TOPO) --cleanup
 
 redeploy: destroy deploy
-
-re-ztp:
-	@for n in $$(echo $(CEOS) | tr ',' ' '); do \
-	  echo "==> $$n"; \
-	  sudo docker exec clab-$(LAB)-$$n truncate -s 0 /mnt/flash/startup-config; \
-	  sudo docker restart clab-$(LAB)-$$n >/dev/null; \
-	done
-	@echo "All cEOS restarted; ZTP will run on the next boot of each."
 
 ps:
 	sudo containerlab inspect -t $(TOPO)

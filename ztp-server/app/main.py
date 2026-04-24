@@ -234,15 +234,20 @@ async def api_device_logs_stream(host: str, request: Request, tail: int = 200):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@app.post("/api/devices/{host}/reprovision", tags=["devices"])
-async def api_device_reprovision(host: str):
+@app.post("/api/devices/{host}/apply-config", tags=["devices"])
+async def api_device_apply_config(host: str):
+    """Push the current per-host config into the device's running config
+    (and save it). No reboot — uses `configure replace ... force` over
+    `Cli` inside the container to avoid tearing down the netns and
+    losing the externally-created data-plane veths.
+    """
     try:
-        result = docker_ctl.reprovision(host)
+        result = docker_ctl.apply_config(host)
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
         raise HTTPException(500, str(e))
-    await _broadcast({"type": "reprovision", "host": host})
+    await _broadcast({"type": "config_applied", "host": host})
     return result
 
 
