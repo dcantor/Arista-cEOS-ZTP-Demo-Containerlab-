@@ -61,21 +61,17 @@ ztp-events:
 ui-dev:
 	cd ztp-server/app/ui && npm install && npm run dev
 
-# vEOS has no docker exec Cli; console is the qemu serial on TCP:5000.
+# vEOS has no docker exec Cli; console is the qemu serial on TCP:5000
+# inside the wrapper's netns. The wrapper container's eth0 has no IP
+# (the launcher strips it so vEOS Management1 can own the L3 address),
+# so we reach the console by telnetting from inside the container itself.
 # Use ctrl-] then 'quit' to exit telnet.
-console-spine1:
-	@IP=$$(sudo docker inspect clab-$(LAB)-spine1 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'); \
-	 echo "Connecting to spine1 console at $$IP:5000 (ctrl-] then 'quit' to exit)"; \
-	 telnet $$IP 5000
+define console_target
+	@echo "Console for $(1) (ctrl-] then 'quit' to exit, login admin/admin)"
+	@sudo docker exec -it clab-$(LAB)-$(1) telnet localhost 5000
+endef
 
-console-spine2:
-	@IP=$$(sudo docker inspect clab-$(LAB)-spine2 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'); \
-	 telnet $$IP 5000
-
-console-leaf1:
-	@IP=$$(sudo docker inspect clab-$(LAB)-leaf1 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'); \
-	 telnet $$IP 5000
-
-console-leaf2:
-	@IP=$$(sudo docker inspect clab-$(LAB)-leaf2 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'); \
-	 telnet $$IP 5000
+console-spine1: ; $(call console_target,spine1)
+console-spine2: ; $(call console_target,spine2)
+console-leaf1:  ; $(call console_target,leaf1)
+console-leaf2:  ; $(call console_target,leaf2)
