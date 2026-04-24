@@ -73,11 +73,19 @@ app = FastAPI(
 
 # ---------- ZTP-facing endpoints (consumed by cEOS) ----------
 
-@app.get("/ztp/bootstrap.sh", response_class=PlainTextResponse, tags=["ztp"])
-def ztp_bootstrap():
-    p = CONTENT_ROOT / "ztp" / "bootstrap.sh"
+_ZTP_FILE_RE = re.compile(r"^[a-zA-Z0-9_-]+\.sh$")
+
+
+@app.get("/ztp/{filename}", response_class=PlainTextResponse, tags=["ztp"])
+def ztp_script(filename: str):
+    """Serve any per-host ZTP script under ztp-content/ztp/. dnsmasq
+    hands the cEOS/vEOS the URL of <hostname>.sh via DHCP option 67.
+    """
+    if not _ZTP_FILE_RE.match(filename):
+        raise HTTPException(400, "filename must be <name>.sh")
+    p = CONTENT_ROOT / "ztp" / filename
     if not p.exists():
-        raise HTTPException(404, "bootstrap.sh missing")
+        raise HTTPException(404, f"no such ztp script: {filename}")
     return PlainTextResponse(p.read_text(), media_type="text/plain")
 
 
@@ -238,11 +246,12 @@ async def api_device_logs_stream(host: str, request: Request, tail: int = 200):
 async def api_device_apply_config(host: str):
     """Push the current per-host config into the device's running config
     (and save it). No reboot — uses `configure replace ... force` over
-    `Cli` inside the container to avoid tearing down the netns and
-    losing the externally-created data-plane veths.
+    eAPI to the live vEOS. apply_config is sync (httpx call into the VM
+    can take 30-60s), so we run it on a worker thread to keep the event
+    loop free for SSE streams.
     """
     try:
-        result = docker_ctl.apply_config(host)
+        result = await asyncio.to_thread(docker_ctl.apply_config, host)
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:

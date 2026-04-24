@@ -1,7 +1,15 @@
+"""Docker/container helpers for the ZTP UI.
+
+Runs inside the ztp-app container (mounts /var/run/docker.sock). Queries
+and mutates the vEOS wrapper containers of the same containerlab lab.
+"""
 import docker
 
 CLAB_LABEL = "clab-node-name"
 LAB_NAME = "ztp-universal-demo"
+# Short names of the vEOS nodes in the topology. Used to find/enumerate
+# them since the containers are kind:linux and don't self-identify as EOS.
+VEOS_NODES = ("spine1", "spine2", "leaf1", "leaf2")
 
 
 def _client():
@@ -9,18 +17,26 @@ def _client():
 
 
 def list_ceos_nodes() -> list[dict]:
-    """Return cEOS containers in the lab with their current MAC + IP."""
+    """Return the vEOS wrapper containers in the lab with mgmt MAC + IP.
+    Name kept as `list_ceos_nodes` for API compat with the old cEOS lab;
+    now returns the vEOS launcher containers.
+    """
     cli = _client()
     out = []
-    for c in cli.containers.list(all=True, filters={"label": f"clab-node-kind=ceos"}):
-        labels = c.labels
-        if labels.get("containerlab") != LAB_NAME:
+    for node in VEOS_NODES:
+        name = f"clab-{LAB_NAME}-{node}"
+        try:
+            c = cli.containers.get(name)
+        except docker.errors.NotFound:
             continue
         net = c.attrs["NetworkSettings"]["Networks"].get("ztp-mgmt", {})
         out.append({
-            "name": labels.get(CLAB_LABEL, c.name),
+            "name": node,
             "container": c.name,
             "status": c.status,
+            # The Docker-assigned MAC on the wrapper is meaningless for the
+            # VM; the VM synthesizes its own MAC deterministically from the
+            # node name. Report the wrapper's MAC for transparency.
             "mac": net.get("MacAddress"),
             "ip": net.get("IPAddress"),
         })
@@ -28,7 +44,10 @@ def list_ceos_nodes() -> list[dict]:
 
 
 def container_logs(short_name: str, tail: int = 5000) -> bytes | None:
-    """Return raw docker logs for a node in the lab, or None if missing."""
+    """Return raw docker logs for a node in the lab, or None if missing.
+    For vEOS nodes this is the launcher's output (bridge setup + qemu
+    stderr); real vEOS boot logs live on the serial console (port 5000).
+    """
     cli = _client()
     container_name = f"clab-{LAB_NAME}-{short_name}"
     try:
@@ -39,42 +58,63 @@ def container_logs(short_name: str, tail: int = 5000) -> bytes | None:
 
 
 def apply_config(node_name: str, server_url: str = "http://172.30.0.20") -> dict:
-    """Hot-swap the cEOS running config to the per-host file the ZTP
-    server is currently serving, then save it to startup-config.
-
-    Uses `Cli configure replace <url> force` + `write memory` inside the
-    container — eAPI-free, no reboot, no netns teardown, no veth loss.
-    Equivalent to "make the device match what is in
-    ztp-content/configs/<node>.cfg" without re-running ZTP.
+    """Hot-swap the vEOS running config to the per-host file the ZTP
+    server is currently serving, then save it to startup-config. Uses
+    eAPI (HTTP JSON-RPC) over the device's post-ZTP management IP. No
+    VM reboot, no container restart.
     """
-    cli = _client()
-    container_name = f"clab-{LAB_NAME}-{node_name}"
-    try:
-        c = cli.containers.get(container_name)
-    except docker.errors.NotFound:
+    # Map node name → post-ZTP management IP. Matches the per-host config
+    # files in ztp-content/configs.
+    mgmt_ip_by_node = {
+        "spine1": "172.30.0.101",
+        "spine2": "172.30.0.102",
+        "leaf1":  "172.30.0.103",
+        "leaf2":  "172.30.0.104",
+    }
+    if node_name not in mgmt_ip_by_node:
         raise ValueError(f"unknown node: {node_name}")
 
+    import httpx
+
     url = f"{server_url}/configs/{node_name}.cfg"
-    # FastCli (not Cli) bypasses AAA "Default authorization rejects all"
-    # which trips on the lab's no-aaa-root configs.
-    cmd = [
-        "FastCli", "-p", "15",
-        "-c", f"configure replace {url} force",
-        "-c", "write memory",
-    ]
-    rc, out = c.exec_run(cmd)
-    raw = out.decode("utf-8", errors="replace") if out else ""
-    # Strip ANSI sequences and other non-ASCII so the JSON response body
-    # length matches Content-Length (uvicorn enforces it strictly).
-    import re as _re
-    output = _re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw)
-    output = output.encode("ascii", errors="replace").decode("ascii")
-    if rc != 0:
-        raise RuntimeError(f"apply_config failed (rc={rc}): {output}")
+    # vEOS exposes eAPI on HTTPS:443 by default with a self-signed cert.
+    eapi_url = f"https://{mgmt_ip_by_node[node_name]}/command-api"
+    body = {
+        "jsonrpc": "2.0",
+        "method": "runCmds",
+        "id": 1,
+        "params": {
+            "version": 1,
+            "format": "text",
+            "cmds": [
+                "enable",
+                f"configure replace {url} force",
+                "copy running-config startup-config",
+            ],
+        },
+    }
+    # Credentials match the lab's per-host configs.
+    auth = ("admin", "admin")
+    try:
+        # configure replace can take 30-60s on a busy vEOS host with
+        # multiple VMs contending for CPU; give it real headroom.
+        r = httpx.post(eapi_url, json=body, auth=auth, timeout=120.0, verify=False)
+    except Exception as e:
+        raise RuntimeError(f"eAPI request failed: {e}")
+    if r.status_code != 200:
+        raise RuntimeError(f"eAPI {r.status_code}: {r.text[:500]}")
+    data = r.json()
+    if "error" in data:
+        raise RuntimeError(f"eAPI error: {data['error']}")
+
+    raw_tail = str(data.get("result", ""))[-500:]
+    # uvicorn computes Content-Length in bytes; ensure ASCII so string len
+    # and byte len match.
+    safe_tail = raw_tail.encode("ascii", "replace").decode("ascii")
     return {
         "node": node_name,
-        "container": container_name,
+        "container": f"clab-{LAB_NAME}-{node_name}",
         "status": "applied",
         "source_url": url,
-        "output_tail": output[-500:],
+        "output_tail": safe_tail,
     }

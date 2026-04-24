@@ -6,6 +6,11 @@ ztp-server/app/ui/dist/
 data/
 dhcp-state/
 
+# the vEOS image is multi-hundred-MB, never commit it
+vEOS-lab*.qcow2
+vEOS-lab*.vmdk
+*.qcow2
+
 # containerlab CA material — never commit private keys
 ca.key
 ca.pem

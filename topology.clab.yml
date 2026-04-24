@@ -7,10 +7,12 @@ mgmt:
 
 topology:
   kinds:
-    ceos:
-      image: ceosimage:4.35.1F
     linux:
       image: alpine:3.20
+
+  # YAML anchor: common wiring for every vEOS node.
+  defaults:
+    kind: linux
 
   nodes:
     ztp-dhcp:
@@ -36,57 +38,74 @@ topology:
         - data:/data
         - /var/run/docker.sock:/var/run/docker.sock
 
+    # ---- vEOS nodes ----
+    # All four share the same veos-launcher image; per-node identity comes
+    # from env (NODE_NAME) which drives deterministic MAC assignment.
     spine1:
-      kind: ceos
-      startup-config: startup/spine1.cfg
+      kind: linux
+      image: veos-launcher:latest
       env:
-        SERIALNUMBER: SPINE001
+        NODE_NAME: spine1
+      devices:
+        - /dev/kvm
+        - /dev/net/tun
+      cap-add: [NET_ADMIN, NET_RAW, SYS_NICE]
+      binds:
+        - vEOS-lab-4.36.0F.qcow2:/vEOS.qcow2:ro
+        - data/veos-overlay:/overlay
       stages:
         create:
           wait-for:
-            - node: ztp-dhcp
-              stage: create
-            - node: ztp-http
-              stage: create
+            - {node: ztp-dhcp, stage: create}
+            - {node: ztp-http, stage: create}
 
     spine2:
-      kind: ceos
-      startup-config: startup/spine2.cfg
+      kind: linux
+      image: veos-launcher:latest
       env:
-        SERIALNUMBER: SPINE002
+        NODE_NAME: spine2
+      devices: [/dev/kvm, /dev/net/tun]
+      cap-add: [NET_ADMIN, NET_RAW, SYS_NICE]
+      binds:
+        - vEOS-lab-4.36.0F.qcow2:/vEOS.qcow2:ro
+        - data/veos-overlay:/overlay
       stages:
         create:
           wait-for:
-            - node: ztp-dhcp
-              stage: create
-            - node: ztp-http
-              stage: create
+            - {node: ztp-dhcp, stage: create}
+            - {node: ztp-http, stage: create}
 
     leaf1:
-      kind: ceos
-      startup-config: startup/leaf1.cfg
+      kind: linux
+      image: veos-launcher:latest
       env:
-        SERIALNUMBER: LEAF001
+        NODE_NAME: leaf1
+      devices: [/dev/kvm, /dev/net/tun]
+      cap-add: [NET_ADMIN, NET_RAW, SYS_NICE]
+      binds:
+        - vEOS-lab-4.36.0F.qcow2:/vEOS.qcow2:ro
+        - data/veos-overlay:/overlay
       stages:
         create:
           wait-for:
-            - node: ztp-dhcp
-              stage: create
-            - node: ztp-http
-              stage: create
+            - {node: ztp-dhcp, stage: create}
+            - {node: ztp-http, stage: create}
 
     leaf2:
-      kind: ceos
-      startup-config: startup/leaf2.cfg
+      kind: linux
+      image: veos-launcher:latest
       env:
-        SERIALNUMBER: LEAF002
+        NODE_NAME: leaf2
+      devices: [/dev/kvm, /dev/net/tun]
+      cap-add: [NET_ADMIN, NET_RAW, SYS_NICE]
+      binds:
+        - vEOS-lab-4.36.0F.qcow2:/vEOS.qcow2:ro
+        - data/veos-overlay:/overlay
       stages:
         create:
           wait-for:
-            - node: ztp-dhcp
-              stage: create
-            - node: ztp-http
-              stage: create
+            - {node: ztp-dhcp, stage: create}
+            - {node: ztp-http, stage: create}
 
   links:
     - endpoints: [spine1:eth1, leaf1:eth1]
