@@ -105,7 +105,11 @@ active leases parsed from `dnsmasq.leases`.
 ### Events
 
 Full chronological event log across all devices. Click a host name to jump
-to its detail page.
+to its detail page. The **⬇ Download logs bundle** button in the top right
+fetches a `.tar.gz` of the current ZTP events (JSON), the DHCP lease
+snapshot, the raw dnsmasq DHCP log, the FastAPI access log, and a
+manifest — handy for filing a bug or sharing a deploy state. Backed by
+`GET /api/logs/bundle`.
 
 ![Event log](docs/screenshots/events.png)
 
