@@ -13,7 +13,16 @@ export default function Events() {
 
   return (
     <section>
-      <h1 className="text-xl font-semibold mb-4">ZTP event log</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-semibold">ZTP event log</h1>
+        <a
+          href="/api/logs/bundle"
+          className="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 text-sm inline-flex items-center gap-1"
+          title="Download a .tar.gz of events + DHCP leases + dnsmasq + app logs"
+        >
+          ⬇ Download logs bundle
+        </a>
+      </div>
       <div className="rounded border border-slate-800 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-900 text-slate-400 text-left">

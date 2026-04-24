@@ -1,7 +1,10 @@
 import asyncio
+import io
 import json
 import os
 import re
+import tarfile
+from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -10,6 +13,7 @@ from fastapi.responses import (
     FileResponse,
     JSONResponse,
     PlainTextResponse,
+    Response,
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
@@ -58,6 +62,7 @@ app = FastAPI(
         {"name": "leases", "description": "DHCP pool view (parsed from dnsmasq.leases)."},
         {"name": "events", "description": "ZTP event log persisted in SQLite."},
         {"name": "stream", "description": "Server-Sent Events fan-out for live dashboard updates."},
+        {"name": "logs", "description": "Ad-hoc bundles of events, leases, and raw container logs for offline triage."},
     ],
 )
 
@@ -173,6 +178,57 @@ def api_leases():
 @app.get("/api/events", tags=["events"])
 def api_events(limit: int = 200):
     return db.list_events(limit=limit)
+
+
+# ---------- Logs bundle ----------
+
+@app.get("/api/logs/bundle", tags=["logs"])
+def api_logs_bundle():
+    """Build a .tar.gz bundle in memory containing the ZTP events, the
+    DHCP lease snapshot, and the raw docker logs of the dnsmasq and
+    ztp-app containers. A small manifest.json describes the contents.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    folder = f"ztp-logs-{ts}"
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+
+    events = db.list_events(limit=100_000)
+    pool = leases.pool_summary()
+
+    bundle_files = [
+        ("events.json", json.dumps(events, indent=2).encode()),
+        ("leases.json", json.dumps(pool, indent=2).encode()),
+    ]
+
+    log_sources = [("dnsmasq.log", "ztp-dhcp"), ("app.log", "ztp-http")]
+    for filename, short in log_sources:
+        data = docker_ctl.container_logs(short)
+        if data is None:
+            data = f"# container clab-{docker_ctl.LAB_NAME}-{short} not found\n".encode()
+        bundle_files.append((filename, data))
+
+    manifest = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "lab": docker_ctl.LAB_NAME,
+        "event_count": len(events),
+        "lease_count": pool["used"],
+        "files": [name for name, _ in bundle_files],
+    }
+    bundle_files.append(("manifest.json", json.dumps(manifest, indent=2).encode()))
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, data in bundle_files:
+            info = tarfile.TarInfo(name=f"{folder}/{name}")
+            info.size = len(data)
+            info.mtime = now_epoch
+            tar.addfile(info, io.BytesIO(data))
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{folder}.tar.gz"'},
+    )
 
 
 # ---------- SSE ----------

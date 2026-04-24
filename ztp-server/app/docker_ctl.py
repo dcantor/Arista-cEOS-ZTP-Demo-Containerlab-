@@ -27,6 +27,17 @@ def list_ceos_nodes() -> list[dict]:
     return sorted(out, key=lambda n: n["name"])
 
 
+def container_logs(short_name: str, tail: int = 5000) -> bytes | None:
+    """Return raw docker logs for a node in the lab, or None if missing."""
+    cli = _client()
+    container_name = f"clab-{LAB_NAME}-{short_name}"
+    try:
+        c = cli.containers.get(container_name)
+    except docker.errors.NotFound:
+        return None
+    return c.logs(stream=False, tail=tail, stdout=True, stderr=True, timestamps=True)
+
+
 def reprovision(node_name: str) -> dict:
     """Clear /mnt/flash/startup-config on the cEOS container and restart it
     so ZTP runs again on the next boot.
