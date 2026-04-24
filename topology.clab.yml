@@ -1,0 +1,95 @@
+name: ztp-universal-demo
+
+mgmt:
+  network: ztp-mgmt
+  ipv4-subnet: 172.30.0.0/24
+  ipv4-gw: 172.30.0.1
+
+topology:
+  kinds:
+    ceos:
+      image: ceosimage:4.35.1F
+    linux:
+      image: alpine:3.20
+
+  nodes:
+    ztp-dhcp:
+      kind: linux
+      image: dnsmasq-ztp:latest
+      mgmt-ipv4: 172.30.0.10
+      binds:
+        - ztp-server/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro
+        - dhcp-state:/dhcp-state
+      cap-add:
+        - NET_ADMIN
+        - NET_RAW
+
+    ztp-http:
+      kind: linux
+      image: ztp-app:latest
+      mgmt-ipv4: 172.30.0.20
+      ports:
+        - "8080:80"
+      binds:
+        - ztp-content:/ztp-content
+        - dhcp-state:/dhcp-state:ro
+        - data:/data
+        - /var/run/docker.sock:/var/run/docker.sock
+
+    spine1:
+      kind: ceos
+      startup-config: startup/spine1.cfg
+      env:
+        SERIALNUMBER: SPINE001
+      stages:
+        create:
+          wait-for:
+            - node: ztp-dhcp
+              stage: create
+            - node: ztp-http
+              stage: create
+
+    spine2:
+      kind: ceos
+      startup-config: startup/spine2.cfg
+      env:
+        SERIALNUMBER: SPINE002
+      stages:
+        create:
+          wait-for:
+            - node: ztp-dhcp
+              stage: create
+            - node: ztp-http
+              stage: create
+
+    leaf1:
+      kind: ceos
+      startup-config: startup/leaf1.cfg
+      env:
+        SERIALNUMBER: LEAF001
+      stages:
+        create:
+          wait-for:
+            - node: ztp-dhcp
+              stage: create
+            - node: ztp-http
+              stage: create
+
+    leaf2:
+      kind: ceos
+      startup-config: startup/leaf2.cfg
+      env:
+        SERIALNUMBER: LEAF002
+      stages:
+        create:
+          wait-for:
+            - node: ztp-dhcp
+              stage: create
+            - node: ztp-http
+              stage: create
+
+  links:
+    - endpoints: [spine1:eth1, leaf1:eth1]
+    - endpoints: [spine1:eth2, leaf2:eth1]
+    - endpoints: [spine2:eth1, leaf1:eth2]
+    - endpoints: [spine2:eth2, leaf2:eth2]

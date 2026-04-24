@@ -1,0 +1,13 @@
+.venv/
+clab-ztp-universal-demo/
+*.log
+ztp-server/app/ui/node_modules/
+ztp-server/app/ui/dist/
+data/
+dhcp-state/
+
+# containerlab CA material — never commit private keys
+ca.key
+ca.pem
+*.key
+*.pem
