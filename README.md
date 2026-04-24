@@ -71,6 +71,14 @@ top right reflects the SSE connection.
 
 ![Devices](docs/screenshots/devices.png)
 
+The **Live ZTP Viewer** button per row opens a drawer at the bottom of
+the page that streams `docker logs -f` for that cEOS container — useful
+for watching the systemd boot, ZTP DHCP exchanges, the bootstrap script
+running, and the post-ZTP reboot. Backed by the SSE endpoint
+`GET /api/devices/{host}/logs/stream`.
+
+![Live ZTP Viewer](docs/screenshots/live-ztp-viewer.png)
+
 ### Device detail
 
 Per-device summary, full event timeline, the served EOS config, and two

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tarfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -26,6 +27,9 @@ import leases
 CONTENT_ROOT = Path(os.environ.get("ZTP_CONTENT_ROOT", "/ztp-content"))
 STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", "/app/static"))
 HOST_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+# Strip ANSI escape sequences (CSI ... final byte) from terminal output so the
+# log stream renders cleanly as plain text in the browser.
+ANSI_RE = re.compile(rb"\x1B\[[0-?]*[ -/]*[@-~]")
 
 # Fan-out for SSE: every connected client gets its own asyncio.Queue.
 _subscribers: set[asyncio.Queue] = set()
@@ -156,6 +160,78 @@ async def api_config_put(host: str, body: ConfigUpdate):
     p.write_text(body.content)
     await _broadcast({"type": "config_updated", "host": host})
     return {"ok": True, "size": p.stat().st_size}
+
+
+@app.get("/api/devices/{host}/logs/stream", tags=["devices"])
+async def api_device_logs_stream(host: str, request: Request, tail: int = 200):
+    """SSE: live `docker logs -f` for the cEOS container backing this node.
+    Each event is one line; the connection stays open until the client
+    disconnects or the container goes away.
+    """
+    if not HOST_RE.match(host):
+        raise HTTPException(400, "invalid host")
+    cli = docker_ctl._client()
+    container_name = f"clab-{docker_ctl.LAB_NAME}-{host}"
+    try:
+        c = cli.containers.get(container_name)
+    except Exception:
+        raise HTTPException(404, "no such device")
+
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=4096)
+    log_stream = c.logs(
+        stream=True, follow=True, tail=tail, stdout=True, stderr=True
+    )
+
+    def reader():
+        # docker streams data in tiny chunks (often single bytes for terminal
+        # output); buffer until a complete line, strip ANSI, then enqueue.
+        buf = b""
+        try:
+            for chunk in log_stream:
+                if not chunk:
+                    continue
+                buf += chunk
+                while b"\n" in buf:
+                    line, _, buf = buf.partition(b"\n")
+                    text = ANSI_RE.sub(b"", line).decode("utf-8", errors="replace").rstrip("\r")
+                    if not queue.full():
+                        loop.call_soon_threadsafe(queue.put_nowait, text)
+            if buf:
+                text = ANSI_RE.sub(b"", buf).decode("utf-8", errors="replace").rstrip("\r")
+                if text and not queue.full():
+                    loop.call_soon_threadsafe(queue.put_nowait, text)
+        except Exception:
+            pass
+        finally:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+            except Exception:
+                pass
+
+    threading.Thread(target=reader, daemon=True).start()
+
+    async def gen():
+        try:
+            yield "retry: 2000\n\n"
+            while True:
+                if await request.is_disconnected():
+                    return
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if item is None:
+                    return
+                yield f"data: {item}\n\n"
+        finally:
+            try:
+                log_stream.close()
+            except Exception:
+                pass
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/api/devices/{host}/reprovision", tags=["devices"])
