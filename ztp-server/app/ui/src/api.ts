@@ -59,8 +59,9 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     }),
-  reprovision: (host: string) =>
-    j<{ node: string; status: string }>(`/api/devices/${host}/reprovision`, {
-      method: "POST",
-    }),
+  applyConfig: (host: string) =>
+    j<{ node: string; status: string; source_url: string }>(
+      `/api/devices/${host}/apply-config`,
+      { method: "POST" },
+    ),
 };

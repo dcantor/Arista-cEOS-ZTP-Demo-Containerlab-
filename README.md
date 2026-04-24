@@ -71,12 +71,22 @@ top right reflects the SSE connection.
 
 ![Devices](docs/screenshots/devices.png)
 
+The **Live ZTP Viewer** button per row opens a drawer at the bottom of
+the page that streams `docker logs -f` for that cEOS container — useful
+for watching the systemd boot, ZTP DHCP exchanges, the bootstrap script
+running, and the post-ZTP reboot. Backed by the SSE endpoint
+`GET /api/devices/{host}/logs/stream`.
+
+![Live ZTP Viewer](docs/screenshots/live-ztp-viewer.png)
+
 ### Device detail
 
 Per-device summary, full event timeline, the served EOS config, and two
-actions: **Edit config** (jumps to the editor) and **Re-provision**, which
-clears `/mnt/flash/startup-config` on the cEOS container and restarts it,
-triggering a fresh ZTP cycle.
+actions: **Edit config** (jumps to the editor) and **Apply config (live)**,
+which hot-swaps the device's running and startup config to the file the
+ZTP server is currently serving — `FastCli configure replace <url> force`
++ `write memory`. No reboot, no netns teardown, no fabric impact (see
+*Limitations* below for why we don't reboot the cEOS).
 
 ![Device detail](docs/screenshots/device-detail.png)
 
@@ -90,8 +100,8 @@ and last-modified time.
 ### Config editor
 
 In-browser editor for `ztp-content/configs/<host>.cfg`. **Save** writes
-the file; **Save and re-provision** also kicks the matching cEOS so it
-picks up the change immediately.
+the file; **Save and apply** also pushes the new content into the live
+cEOS via `configure replace` (no reboot).
 
 ![Config editor](docs/screenshots/config-editor.png)
 
@@ -166,21 +176,48 @@ of `make deploy` finishing.
 
 ## Lifecycle
 
-| Goal                                        | Command                                                                 |
-|---------------------------------------------|--------------------------------------------------------------------------|
-| Bring up the lab                            | `make deploy`                                                           |
-| Tear down the lab                           | `make destroy`                                                          |
-| Tear down + re-bring-up everything          | `make redeploy`                                                         |
-| Re-trigger ZTP on all 4 cEOS (servers stay) | `make re-ztp`                                                           |
-| Re-trigger ZTP on one cEOS                  | UI → device → **Re-provision**                                          |
-| Rebuild only the app image                  | `make build-app`                                                        |
-| Wipe persistent state (events, leases)      | `make destroy && sudo rm -rf data dhcp-state && make deploy`            |
+| Goal                                                | Command                                                          |
+|-----------------------------------------------------|------------------------------------------------------------------|
+| Bring up the lab                                    | `make deploy`                                                    |
+| Tear down the lab                                   | `make destroy`                                                   |
+| Re-run ZTP from scratch (only path, see below)      | `make redeploy`                                                  |
+| Apply the current per-host config to a live device  | UI → device → **Apply config (live)** (no reboot)                |
+| Rebuild only the app image                          | `make build-app`                                                 |
+| Wipe persistent state (events, leases)              | `make destroy && sudo rm -rf data dhcp-state && make deploy`     |
 
-Note: containerlab 0.74 doesn't support adding/replacing one node in an
-existing lab — `deploy --node-filter` errors out if the lab already
-exists. `make re-ztp` works around this by reusing the existing cEOS
-containers (it just truncates `/mnt/flash/startup-config` and restarts
-each one).
+## Limitations
+
+**You cannot restart a single cEOS container without breaking the fabric.**
+Containerlab creates the data-plane links between cEOS nodes
+(`spine1:eth1↔leaf1:eth1`, etc.) as raw `veth` pairs in the host network
+namespace, then moves one end into each container's netns. They are not
+Docker-managed.
+
+When a container stops or restarts, Docker tears down its netns. The
+kernel deletes the interfaces inside it, and the **peer** ends in the
+*other* cEOS containers die with them (veth pairs are inseparable). The
+restarted cEOS then blocks on `if-wait.sh` ("Connected 0 interfaces out
+of 2 (waited Ns)") because `eth1`/`eth2` are gone, and the peer cEOS
+silently lose their links to it.
+
+cEOS-lab itself has no working in-container reload — `reload now` is
+explicitly blocked ("not supported on this hardware platform"),
+`systemctl reboot` exits the container, and there is no `/sbin/reboot`.
+
+Practical consequences:
+
+- **`docker restart` / `docker stop+start` of a cEOS = lab is broken.**
+  Recover with `make redeploy`.
+- **Use the UI's *Apply config (live)* button** to push a new config to a
+  cEOS without a reboot. It does `FastCli configure replace <url> force`
+  + `write memory`, which mutates the running config in place. Veths
+  stay up; ZTP does *not* re-run.
+- **`docker stop`/`restart` of `ztp-app` and `ztp-dhcp` is fine** — those
+  containers only have an `eth0` (mgmt), no fabric veths.
+- **To demonstrate ZTP from a clean slate, use `make redeploy`** (full
+  destroy + deploy of the lab). Containerlab 0.74 does not support
+  adding or replacing a single node in an existing lab — `deploy
+  --node-filter` errors with "lab already deployed".
 
 ## Verify
 

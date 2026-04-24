@@ -38,9 +38,14 @@ def container_logs(short_name: str, tail: int = 5000) -> bytes | None:
     return c.logs(stream=False, tail=tail, stdout=True, stderr=True, timestamps=True)
 
 
-def reprovision(node_name: str) -> dict:
-    """Clear /mnt/flash/startup-config on the cEOS container and restart it
-    so ZTP runs again on the next boot.
+def apply_config(node_name: str, server_url: str = "http://172.30.0.20") -> dict:
+    """Hot-swap the cEOS running config to the per-host file the ZTP
+    server is currently serving, then save it to startup-config.
+
+    Uses `Cli configure replace <url> force` + `write memory` inside the
+    container — eAPI-free, no reboot, no netns teardown, no veth loss.
+    Equivalent to "make the device match what is in
+    ztp-content/configs/<node>.cfg" without re-running ZTP.
     """
     cli = _client()
     container_name = f"clab-{LAB_NAME}-{node_name}"
@@ -48,8 +53,28 @@ def reprovision(node_name: str) -> dict:
         c = cli.containers.get(container_name)
     except docker.errors.NotFound:
         raise ValueError(f"unknown node: {node_name}")
-    rc, out = c.exec_run(["sh", "-c", "rm -f /mnt/flash/startup-config && truncate -s 0 /mnt/flash/startup-config"])
+
+    url = f"{server_url}/configs/{node_name}.cfg"
+    # FastCli (not Cli) bypasses AAA "Default authorization rejects all"
+    # which trips on the lab's no-aaa-root configs.
+    cmd = [
+        "FastCli", "-p", "15",
+        "-c", f"configure replace {url} force",
+        "-c", "write memory",
+    ]
+    rc, out = c.exec_run(cmd)
+    raw = out.decode("utf-8", errors="replace") if out else ""
+    # Strip ANSI sequences and other non-ASCII so the JSON response body
+    # length matches Content-Length (uvicorn enforces it strictly).
+    import re as _re
+    output = _re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw)
+    output = output.encode("ascii", errors="replace").decode("ascii")
     if rc != 0:
-        raise RuntimeError(f"failed to clear startup-config: {out.decode(errors='replace')}")
-    c.restart(timeout=10)
-    return {"node": node_name, "container": container_name, "status": "restarting"}
+        raise RuntimeError(f"apply_config failed (rc={rc}): {output}")
+    return {
+        "node": node_name,
+        "container": container_name,
+        "status": "applied",
+        "source_url": url,
+        "output_tail": output[-500:],
+    }

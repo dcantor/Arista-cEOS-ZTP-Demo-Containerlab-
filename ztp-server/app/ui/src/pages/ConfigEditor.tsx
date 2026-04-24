@@ -27,11 +27,13 @@ export default function ConfigEditor() {
     finally { setBusy(false); }
   };
 
-  const reprovision = async () => {
+  const saveAndApply = async () => {
     setBusy(true); setMsg(null);
     try {
-      await api.reprovision(host);
-      setMsg("Reprovision triggered. ZTP will run on next boot.");
+      await api.saveConfig(host, content);
+      setOriginal(content);
+      const r = await api.applyConfig(host);
+      setMsg(`Saved and applied (${r.source_url}). Running + startup updated, no reboot.`);
     } catch (e) { setMsg(`Failed: ${e}`); }
     finally { setBusy(false); }
   };
@@ -58,11 +60,12 @@ export default function ConfigEditor() {
           {busy ? "..." : dirty ? "Save" : "Saved"}
         </button>
         <button
-          onClick={reprovision}
+          onClick={saveAndApply}
           disabled={busy}
-          className="px-3 py-2 rounded bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-sm"
+          className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm"
+          title="Save the file, then push it live via Cli configure replace (no reboot)"
         >
-          Save and re-provision
+          Save and apply
         </button>
         {msg && <span className="text-sm text-slate-300">{msg}</span>}
       </div>

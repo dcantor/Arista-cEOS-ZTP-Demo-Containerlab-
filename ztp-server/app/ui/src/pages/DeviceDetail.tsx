@@ -29,12 +29,13 @@ export default function DeviceDetail() {
     if (m.type === "config_updated" && m.host === host) refresh();
   });
 
-  const reprovision = async () => {
+  const apply = async () => {
     setBusy(true);
     setMsg(null);
     try {
-      await api.reprovision(host);
-      setMsg("Reprovision triggered. Container is restarting; ZTP will run on next boot.");
+      const r = await api.applyConfig(host);
+      setMsg(`Applied config from ${r.source_url} (running + startup updated, no reboot).`);
+      refresh();
     } catch (e) {
       setMsg(`Failed: ${e}`);
     } finally {
@@ -61,11 +62,12 @@ export default function DeviceDetail() {
 
       <div className="flex items-center gap-3 mb-6">
         <button
-          onClick={reprovision}
+          onClick={apply}
           disabled={busy || !device?.container}
-          className="px-3 py-2 rounded bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-sm"
+          className="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-sm"
+          title="Push the served per-host config into running + startup via Cli configure replace. No reboot."
         >
-          {busy ? "Triggering..." : "Re-provision (clear startup-config and restart)"}
+          {busy ? "Applying…" : "Apply config (live)"}
         </button>
         <Link to={`/edit/${host}`} className="px-3 py-2 rounded border border-slate-700 hover:bg-slate-800 text-sm">
           Edit config
