@@ -4,10 +4,18 @@ export type Device = {
   status: string;
   mac: string | null;
   ip: string | null;
+  source?: "topology" | "managed" | "absent";
   first_seen?: string;
   last_seen?: string;
   last_event?: string;
   event_count?: number;
+};
+
+export type ManagedDevice = {
+  name: string;
+  mac: string;
+  mgmt_ip: string;
+  created_at: string;
 };
 
 export type Lease = {
@@ -64,4 +72,15 @@ export const api = {
       `/api/devices/${host}/apply-config`,
       { method: "POST" },
     ),
+  managedDevices: () => j<ManagedDevice[]>("/api/managed-devices"),
+  addManagedDevice: (name: string, mac: string, mgmt_ip: string) =>
+    j<ManagedDevice>("/api/managed-devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, mac, mgmt_ip }),
+    }),
+  deleteManagedDevice: (name: string) =>
+    j<{ ok: boolean; name: string }>(`/api/managed-devices/${name}`, {
+      method: "DELETE",
+    }),
 };

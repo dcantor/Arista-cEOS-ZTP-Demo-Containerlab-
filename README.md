@@ -71,11 +71,29 @@ takes 5–7 minutes for vEOS to boot + ZTP + reboot.
 
 ### Devices
 
-Live inventory: container status, ZTP state pill, current Docker MAC
-and IP of the wrapper container, last seen, event count. Updates push
-in via Server-Sent Events.
+Live inventory: container status, ZTP state pill, current MAC and
+mgmt IP, last seen, event count. Updates push in via Server-Sent Events.
+The **Source** column distinguishes `topology` (vEOS nodes from
+`topology.clab.yml`) from `managed` (devices the user registered via
+the UI — see below).
 
 ![Devices](docs/screenshots/devices.png)
+
+The **+ Add device** button at the bottom of the grid registers an
+external device by MAC + mgmt IP. Each add:
+
+1. Inserts a row in `managed_devices` (SQLite).
+2. Rewrites `/dhcp-state/managed.conf` with `dhcp-host=<mac>,<ip>,set:<name>`
+   plus `dhcp-boot=tag:<name>,http://172.30.0.20/ztp/<name>.sh`.
+3. Restarts the dnsmasq container (a SIGHUP would only reload leases,
+   not the new `dhcp-host` entries from `conf-file=` includes).
+4. Auto-creates `ztp-content/ztp/<name>.sh` and a placeholder
+   `ztp-content/configs/<name>.cfg` so the device is immediately
+   ZTP-ready when it DHCPs in.
+
+The per-managed-device **Delete** button reverses this (drops the
+reservation and removes the script; the config file is left in place).
+Backed by `GET/POST/DELETE /api/managed-devices`.
 
 The **Live ZTP Viewer** button per row opens a drawer that streams
 `docker logs -f` for the *wrapper container* (qemu launcher output);

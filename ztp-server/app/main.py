@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
+import dnsmasq as dnsmasq_mgr
 import docker_ctl
 import leases
 
@@ -47,6 +48,9 @@ async def _broadcast(payload: dict) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
+    # Make sure /dhcp-state/managed.conf exists even on a clean deploy
+    # — dnsmasq's `conf-file=` would error on a missing file otherwise.
+    dnsmasq_mgr.regenerate()
     yield
 
 
@@ -67,6 +71,7 @@ app = FastAPI(
         {"name": "events", "description": "ZTP event log persisted in SQLite."},
         {"name": "stream", "description": "Server-Sent Events fan-out for live dashboard updates."},
         {"name": "logs", "description": "Ad-hoc bundles of events, leases, and raw container logs for offline triage."},
+        {"name": "managed-devices", "description": "User-registered devices: dynamic DHCP reservations + per-host bootfile URL."},
     ],
 )
 
@@ -119,14 +124,121 @@ def api_devices():
     summaries = {s["host"]: s for s in db.host_summaries()}
     nodes = docker_ctl.list_ceos_nodes()
     out = []
+    seen_names: set[str] = set()
     for n in nodes:
         s = summaries.pop(n["name"], {})
-        out.append({**n, **s})
-    # Hosts seen via /log but not currently a container (e.g. destroyed)
+        out.append({**n, "source": "topology", **s})
+        seen_names.add(n["name"])
+    for md in db.list_managed_devices():
+        if md["name"] in seen_names:
+            continue
+        s = summaries.pop(md["name"], {})
+        out.append({
+            "name": md["name"], "container": None, "status": "external",
+            "mac": md["mac"], "ip": md["mgmt_ip"],
+            "source": "managed", **s,
+        })
+    # Hosts seen via /log but not in topology and not user-managed.
     for s in summaries.values():
         out.append({"name": s["host"], "container": None, "status": "absent",
-                    "mac": None, "ip": None, **s})
+                    "mac": None, "ip": None, "source": "absent", **s})
     return out
+
+
+# ---------- Managed devices ----------
+
+_MAC_RE = re.compile(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$")
+_IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+
+
+class ManagedDeviceCreate(BaseModel):
+    name: str
+    mac: str
+    mgmt_ip: str
+
+
+def _normalize_mac(mac: str) -> str:
+    """Accept aa:bb:.. / aa-bb-.. / aabbcc.. and return canonical lower aa:bb:..."""
+    s = mac.strip().lower().replace("-", "").replace(":", "").replace(".", "")
+    if len(s) != 12 or not all(c in "0123456789abcdef" for c in s):
+        raise ValueError(f"invalid mac address: {mac!r}")
+    return ":".join(s[i:i + 2] for i in range(0, 12, 2))
+
+
+def _scaffold_per_host_script(name: str) -> None:
+    """Drop a per-host /ztp/<name>.sh that mirrors the existing pattern."""
+    p = CONTENT_ROOT / "ztp" / f"{name}.sh"
+    if p.exists():
+        return
+    p.write_text(
+        "#!/bin/bash\n"
+        f"HOST={name}\n"
+        "SRV=http://172.30.0.20\n\n"
+        'curl -fsS -X POST "$SRV/log?host=$HOST&event=start" || true\n'
+        'curl -fsS "$SRV/configs/$HOST.cfg" -o /mnt/flash/startup-config\n'
+        "sync\n"
+        'curl -fsS -X POST "$SRV/log?host=$HOST&event=done" || true\n'
+        "exit 0\n"
+    )
+    p.chmod(0o755)
+
+
+def _scaffold_empty_config(name: str) -> None:
+    """Drop a placeholder ztp-content/configs/<name>.cfg the user can edit."""
+    p = CONTENT_ROOT / "configs" / f"{name}.cfg"
+    if p.exists():
+        return
+    p.write_text(f"! Placeholder config for {name}. Edit me in the Configs tab.\nhostname {name}\n!\nend\n")
+
+
+@app.get("/api/managed-devices", tags=["managed-devices"])
+def api_managed_devices_list():
+    return db.list_managed_devices()
+
+
+@app.post("/api/managed-devices", tags=["managed-devices"])
+async def api_managed_devices_create(body: ManagedDeviceCreate):
+    name = body.name.strip()
+    if not HOST_RE.match(name):
+        raise HTTPException(400, "name must be alphanumeric / dash / underscore")
+    if not _IPV4_RE.match(body.mgmt_ip):
+        raise HTTPException(400, f"invalid mgmt_ip: {body.mgmt_ip!r}")
+    try:
+        mac = _normalize_mac(body.mac)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    try:
+        row = db.insert_managed_device(name, mac, body.mgmt_ip)
+    except Exception as e:
+        # UNIQUE violation or similar
+        raise HTTPException(409, f"could not add device: {e}")
+
+    _scaffold_per_host_script(name)
+    _scaffold_empty_config(name)
+    dnsmasq_mgr.regenerate()
+
+    await _broadcast({"type": "managed_device_added", "device": row})
+    return row
+
+
+@app.delete("/api/managed-devices/{name}", tags=["managed-devices"])
+async def api_managed_devices_delete(name: str):
+    if not HOST_RE.match(name):
+        raise HTTPException(400, "invalid name")
+    if not db.delete_managed_device(name):
+        raise HTTPException(404, "no such managed device")
+
+    # Drop the per-host script (config file is left in place on purpose).
+    script = CONTENT_ROOT / "ztp" / f"{name}.sh"
+    try:
+        script.unlink()
+    except FileNotFoundError:
+        pass
+
+    dnsmasq_mgr.regenerate()
+    await _broadcast({"type": "managed_device_removed", "name": name})
+    return {"ok": True, "name": name}
 
 
 @app.get("/api/configs", tags=["configs"])
