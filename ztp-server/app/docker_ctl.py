@@ -43,6 +43,51 @@ def list_ceos_nodes() -> list[dict]:
     return sorted(out, key=lambda n: n["name"])
 
 
+def _exec(short_name: str, cmd: list[str]) -> tuple[int, str]:
+    """Helper: docker exec a command in the named lab container, return (rc, stdout+stderr)."""
+    cli = _client()
+    container_name = f"clab-{LAB_NAME}-{short_name}"
+    try:
+        c = cli.containers.get(container_name)
+    except docker.errors.NotFound:
+        raise ValueError(f"unknown node: {short_name}")
+    rc, out = c.exec_run(cmd)
+    return rc, (out.decode("utf-8", errors="replace") if out else "")
+
+
+def vm_start(node_name: str) -> dict:
+    """Start the vEOS VM inside the named wrapper container (idempotent)."""
+    rc, out = _exec(node_name, ["/usr/local/bin/vm-start.sh"])
+    if rc != 0:
+        raise RuntimeError(f"vm-start failed (rc={rc}): {out.strip()}")
+    return {"node": node_name, "vm_status": "running", "output": out.strip()}
+
+
+def vm_stop(node_name: str) -> dict:
+    """Stop the vEOS VM (graceful SIGTERM, then SIGKILL after 15 s)."""
+    rc, out = _exec(node_name, ["/usr/local/bin/vm-stop.sh"])
+    if rc != 0:
+        raise RuntimeError(f"vm-stop failed (rc={rc}): {out.strip()}")
+    return {"node": node_name, "vm_status": "stopped", "output": out.strip()}
+
+
+def vm_status(node_name: str) -> str:
+    """Return 'running', 'stopped', or 'unknown' (container not present)."""
+    try:
+        rc, out = _exec(node_name, ["/usr/local/bin/vm-status.sh"])
+    except ValueError:
+        return "unknown"
+    if rc != 0:
+        return "unknown"
+    s = out.strip()
+    return s if s in ("running", "stopped") else "unknown"
+
+
+def vm_status_all() -> dict[str, str]:
+    """Return {node_name: status} for every lab vEOS wrapper."""
+    return {n: vm_status(n) for n in VEOS_NODES}
+
+
 def container_logs(short_name: str, tail: int = 5000) -> bytes | None:
     """Return raw docker logs for a node in the lab, or None if missing.
     For vEOS nodes this is the launcher's output (bridge setup + qemu

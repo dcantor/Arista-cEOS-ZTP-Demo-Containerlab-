@@ -34,6 +34,7 @@ export default function Devices() {
               <th className="px-3 py-2">Node</th>
               <th className="px-3 py-2">Source</th>
               <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">VM</th>
               <th className="px-3 py-2">ZTP</th>
               <th className="px-3 py-2">MAC</th>
               <th className="px-3 py-2">Mgmt IP</th>
@@ -49,7 +50,7 @@ export default function Devices() {
                 onView={setViewerHost} onChange={refresh} />
             ))}
             {devices.length === 0 && (
-              <tr><td colSpan={10} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
+              <tr><td colSpan={11} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -104,6 +105,27 @@ function DeviceRow({ d, images, onView, onChange }: {
       onChange();
     } catch (err) { alert(`Failed: ${err}`); }
   };
+  const startVm = async () => {
+    setBusy(true);
+    try { await api.startVm(d.name); onChange(); }
+    catch (e) { alert(`Failed: ${e}`); }
+    finally { setBusy(false); }
+  };
+  const stopVm = async () => {
+    if (!confirm(`Stop ${d.name}? The VM will shut down (config persists in overlay).`)) return;
+    setBusy(true);
+    try { await api.stopVm(d.name); onChange(); }
+    catch (e) { alert(`Failed: ${e}`); }
+    finally { setBusy(false); }
+  };
+  const vmStatus = d.vm_status ?? (d.container ? "stopped" : "unknown");
+  const vmPill = (
+    <span className={`inline-block px-2 py-0.5 text-xs border rounded mono ${
+      vmStatus === "running" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+      : vmStatus === "stopped" ? "bg-slate-700/40 text-slate-300 border-slate-600"
+      : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+    }`}>{vmStatus}</span>
+  );
   const sourceBadge = (
     <span className={`px-2 py-0.5 text-[10px] rounded mono border ${
       d.source === "topology" ? "bg-sky-500/10 text-sky-300 border-sky-500/40"
@@ -119,6 +141,7 @@ function DeviceRow({ d, images, onView, onChange }: {
       </td>
       <td className="px-3 py-2">{sourceBadge}</td>
       <td className="px-3 py-2">{d.status}</td>
+      <td className="px-3 py-2">{vmPill}</td>
       <td className="px-3 py-2"><StatusPill event={d.last_event} /></td>
       <td className="px-3 py-2 mono">
         {editing && isManaged ? (
@@ -157,10 +180,30 @@ function DeviceRow({ d, images, onView, onChange }: {
       <td className="px-3 py-2">{d.event_count ?? 0}</td>
       <td className="px-3 py-2 text-right">
         <div className="flex justify-end gap-2">
+          {d.container && !editing && vmStatus !== "running" && (
+            <button
+              onClick={startVm}
+              disabled={busy}
+              className="px-2 py-1 rounded text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
+              title="Start the vEOS VM in this wrapper"
+            >
+              {busy ? "…" : "Start"}
+            </button>
+          )}
+          {d.container && !editing && vmStatus === "running" && (
+            <button
+              onClick={stopVm}
+              disabled={busy}
+              className="px-2 py-1 rounded text-xs bg-amber-600 hover:bg-amber-500 disabled:opacity-50"
+              title="Stop the vEOS VM (graceful, then SIGKILL after 15 s)"
+            >
+              {busy ? "…" : "Stop"}
+            </button>
+          )}
           {d.container && !editing && (
             <button
               onClick={() => onView(d.name)}
-              className="px-2 py-1 rounded text-xs bg-emerald-600 hover:bg-emerald-500"
+              className="px-2 py-1 rounded text-xs bg-sky-600 hover:bg-sky-500"
               title="Stream live docker logs for this device"
             >
               Live ZTP Viewer

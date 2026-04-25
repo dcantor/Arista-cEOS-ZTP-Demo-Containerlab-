@@ -1,4 +1,6 @@
 #!/bin/sh
-# Healthy when the qemu process exists. Real readiness comes from inside
-# vEOS (it'll appear in /api/devices once it POSTs event=done to /log).
-pgrep -f qemu-system-x86_64 >/dev/null
+# Healthy as soon as the launcher has finished bridge setup and written
+# the QEMU command file (vm-start.sh is then ready to be invoked). The
+# VM itself may or may not be currently running — that's a separate
+# concern, surfaced via /api/devices/<host>/status.
+test -x /tmp/qemu-cmd.sh

@@ -130,6 +130,7 @@ def api_devices():
     summaries = {s["host"]: s for s in db.host_summaries()}
     eos_choice = db.list_device_settings()  # {name: image-or-None}
     nodes = docker_ctl.list_ceos_nodes()
+    vm_statuses = docker_ctl.vm_status_all()
     out = []
     seen_names: set[str] = set()
     for n in nodes:
@@ -137,6 +138,7 @@ def api_devices():
         out.append({
             **n, "source": "topology",
             "eos_image": eos_choice.get(n["name"]),
+            "vm_status": vm_statuses.get(n["name"], "unknown"),
             **s,
         })
         seen_names.add(n["name"])
@@ -350,6 +352,43 @@ async def api_config_put(host: str, body: ConfigUpdate):
     p.write_text(body.content)
     await _broadcast({"type": "config_updated", "host": host})
     return {"ok": True, "size": p.stat().st_size}
+
+
+@app.post("/api/devices/{host}/start", tags=["devices"])
+async def api_device_start(host: str):
+    """Start the vEOS VM inside the wrapper. Idempotent."""
+    if not HOST_RE.match(host):
+        raise HTTPException(400, "invalid host")
+    try:
+        result = await asyncio.to_thread(docker_ctl.vm_start, host)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    await _broadcast({"type": "vm_started", "host": host})
+    return result
+
+
+@app.post("/api/devices/{host}/stop", tags=["devices"])
+async def api_device_stop(host: str):
+    """Stop the vEOS VM inside the wrapper. Idempotent."""
+    if not HOST_RE.match(host):
+        raise HTTPException(400, "invalid host")
+    try:
+        result = await asyncio.to_thread(docker_ctl.vm_stop, host)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    await _broadcast({"type": "vm_stopped", "host": host})
+    return result
+
+
+@app.get("/api/devices/{host}/status", tags=["devices"])
+def api_device_status(host: str):
+    if not HOST_RE.match(host):
+        raise HTTPException(400, "invalid host")
+    return {"host": host, "vm_status": docker_ctl.vm_status(host)}
 
 
 @app.get("/api/devices/{host}/logs/stream", tags=["devices"])
