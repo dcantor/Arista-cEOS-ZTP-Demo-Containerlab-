@@ -263,6 +263,35 @@ async def api_managed_devices_create(body: ManagedDeviceCreate):
     return row
 
 
+class ManagedDeviceUpdate(BaseModel):
+    mac: str
+    mgmt_ip: str
+
+
+@app.put("/api/managed-devices/{name}", tags=["managed-devices"])
+async def api_managed_devices_update(name: str, body: ManagedDeviceUpdate):
+    if not HOST_RE.match(name):
+        raise HTTPException(400, "invalid name")
+    if not _IPV4_RE.match(body.mgmt_ip):
+        raise HTTPException(400, f"invalid mgmt_ip: {body.mgmt_ip!r}")
+    try:
+        mac = _normalize_mac(body.mac)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    try:
+        row = db.update_managed_device(name, mac, body.mgmt_ip)
+    except Exception as e:
+        # UNIQUE violation on mac or mgmt_ip
+        raise HTTPException(409, f"could not update device: {e}")
+    if row is None:
+        raise HTTPException(404, "no such managed device")
+
+    dnsmasq_mgr.regenerate()
+    await _broadcast({"type": "managed_device_updated", "device": row})
+    return row
+
+
 @app.delete("/api/managed-devices/{name}", tags=["managed-devices"])
 async def api_managed_devices_delete(name: str):
     if not HOST_RE.match(name):

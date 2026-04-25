@@ -72,6 +72,26 @@ function DeviceRow({ d, images, onView, onChange }: {
   onView: (h: string) => void; onChange: () => void;
 }) {
   const isManaged = d.source === "managed";
+  const [editing, setEditing] = useState(false);
+  const [macDraft, setMacDraft] = useState(d.mac ?? "");
+  const [ipDraft, setIpDraft] = useState(d.ip ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const startEdit = () => {
+    setMacDraft(d.mac ?? "");
+    setIpDraft(d.ip ?? "");
+    setEditing(true);
+  };
+  const cancelEdit = () => setEditing(false);
+  const saveEdit = async () => {
+    setBusy(true);
+    try {
+      await api.updateManagedDevice(d.name, macDraft.trim(), ipDraft.trim());
+      setEditing(false);
+      onChange();
+    } catch (e) { alert(`Failed: ${e}`); }
+    finally { setBusy(false); }
+  };
   const remove = async () => {
     if (!confirm(`Remove managed device ${d.name}? This drops the dnsmasq reservation.`)) return;
     try { await api.deleteManagedDevice(d.name); onChange(); }
@@ -100,8 +120,26 @@ function DeviceRow({ d, images, onView, onChange }: {
       <td className="px-3 py-2">{sourceBadge}</td>
       <td className="px-3 py-2">{d.status}</td>
       <td className="px-3 py-2"><StatusPill event={d.last_event} /></td>
-      <td className="px-3 py-2 mono">{d.mac ?? "-"}</td>
-      <td className="px-3 py-2 mono">{d.ip ?? "-"}</td>
+      <td className="px-3 py-2 mono">
+        {editing && isManaged ? (
+          <input
+            value={macDraft}
+            onChange={(e) => setMacDraft(e.target.value)}
+            placeholder="aa:bb:cc:dd:ee:ff"
+            className="mono text-xs bg-slate-950 border border-slate-700 rounded px-2 py-1 w-44"
+          />
+        ) : (d.mac ?? "-")}
+      </td>
+      <td className="px-3 py-2 mono">
+        {editing && isManaged ? (
+          <input
+            value={ipDraft}
+            onChange={(e) => setIpDraft(e.target.value)}
+            placeholder="172.30.0.105"
+            className="mono text-xs bg-slate-950 border border-slate-700 rounded px-2 py-1 w-32"
+          />
+        ) : (d.ip ?? "-")}
+      </td>
       <td className="px-3 py-2">
         <select
           value={d.eos_image ?? ""}
@@ -119,7 +157,7 @@ function DeviceRow({ d, images, onView, onChange }: {
       <td className="px-3 py-2">{d.event_count ?? 0}</td>
       <td className="px-3 py-2 text-right">
         <div className="flex justify-end gap-2">
-          {d.container && (
+          {d.container && !editing && (
             <button
               onClick={() => onView(d.name)}
               className="px-2 py-1 rounded text-xs bg-emerald-600 hover:bg-emerald-500"
@@ -128,14 +166,41 @@ function DeviceRow({ d, images, onView, onChange }: {
               Live ZTP Viewer
             </button>
           )}
-          {isManaged && (
-            <button
-              onClick={remove}
-              className="px-2 py-1 rounded text-xs bg-rose-600 hover:bg-rose-500"
-              title="Remove this device from dnsmasq"
-            >
-              Delete
-            </button>
+          {isManaged && !editing && (
+            <>
+              <button
+                onClick={startEdit}
+                className="px-2 py-1 rounded text-xs bg-sky-600 hover:bg-sky-500"
+                title="Edit MAC and mgmt IP for this device"
+              >
+                Edit
+              </button>
+              <button
+                onClick={remove}
+                className="px-2 py-1 rounded text-xs bg-rose-600 hover:bg-rose-500"
+                title="Remove this device from dnsmasq"
+              >
+                Delete
+              </button>
+            </>
+          )}
+          {editing && (
+            <>
+              <button
+                onClick={saveEdit}
+                disabled={busy}
+                className="px-2 py-1 rounded text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {busy ? "Saving…" : "Save"}
+              </button>
+              <button
+                onClick={cancelEdit}
+                disabled={busy}
+                className="px-2 py-1 rounded text-xs border border-slate-700 hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+            </>
           )}
         </div>
       </td>

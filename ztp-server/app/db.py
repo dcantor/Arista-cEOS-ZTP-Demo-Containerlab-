@@ -99,6 +99,24 @@ def delete_managed_device(name: str) -> bool:
         return cur.rowcount > 0
 
 
+def update_managed_device(name: str, mac: str, mgmt_ip: str) -> dict | None:
+    """Update MAC and/or mgmt IP for an existing managed device.
+    Returns the updated row, or None if no such device.
+    """
+    with connect() as c:
+        cur = c.execute(
+            "UPDATE managed_devices SET mac = ?, mgmt_ip = ? WHERE name = ?",
+            (mac, mgmt_ip, name),
+        )
+        if cur.rowcount == 0:
+            return None
+        row = c.execute(
+            "SELECT name, mac, mgmt_ip, created_at FROM managed_devices WHERE name = ?",
+            (name,),
+        ).fetchone()
+        return dict(row)
+
+
 def get_device_eos_image(name: str) -> str | None:
     with connect() as c:
         row = c.execute(

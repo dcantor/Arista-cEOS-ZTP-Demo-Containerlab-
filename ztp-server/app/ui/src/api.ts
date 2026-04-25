@@ -90,6 +90,12 @@ export const api = {
     j<{ ok: boolean; name: string }>(`/api/managed-devices/${name}`, {
       method: "DELETE",
     }),
+  updateManagedDevice: (name: string, mac: string, mgmt_ip: string) =>
+    j<ManagedDevice>(`/api/managed-devices/${name}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mac, mgmt_ip }),
+    }),
   eosImages: () => j<EosImage[]>("/api/eos-images"),
   setDeviceEosImage: (host: string, eos_image: string | null) =>
     j<{ host: string; eos_image: string | null }>(
