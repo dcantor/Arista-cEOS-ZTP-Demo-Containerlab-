@@ -5,10 +5,17 @@ export type Device = {
   mac: string | null;
   ip: string | null;
   source?: "topology" | "managed" | "absent";
+  eos_image?: string | null;
   first_seen?: string;
   last_seen?: string;
   last_event?: string;
   event_count?: number;
+};
+
+export type EosImage = {
+  filename: string;
+  size: number;
+  mtime: number;
 };
 
 export type ManagedDevice = {
@@ -83,4 +90,14 @@ export const api = {
     j<{ ok: boolean; name: string }>(`/api/managed-devices/${name}`, {
       method: "DELETE",
     }),
+  eosImages: () => j<EosImage[]>("/api/eos-images"),
+  setDeviceEosImage: (host: string, eos_image: string | null) =>
+    j<{ host: string; eos_image: string | null }>(
+      `/api/devices/${host}/eos-image`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eos_image }),
+      },
+    ),
 };

@@ -1,16 +1,20 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Device } from "../api";
+import { api, Device, EosImage } from "../api";
 import { useSSE } from "../hooks/useSSE";
 import StatusPill from "../components/StatusPill";
 import LogDrawer from "../components/LogDrawer";
 
 export default function Devices() {
   const [devices, setDevices] = useState<Device[]>([]);
+  const [images, setImages] = useState<EosImage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [viewerHost, setViewerHost] = useState<string | null>(null);
 
-  const refresh = () => api.devices().then(setDevices).catch((e) => setError(String(e)));
+  const refresh = () => {
+    api.devices().then(setDevices).catch((e) => setError(String(e)));
+    api.eosImages().then(setImages).catch(() => {/* non-fatal */});
+  };
   useEffect(() => { refresh(); }, []);
   const { connected } = useSSE(() => refresh());
 
@@ -33,6 +37,7 @@ export default function Devices() {
               <th className="px-3 py-2">ZTP</th>
               <th className="px-3 py-2">MAC</th>
               <th className="px-3 py-2">Mgmt IP</th>
+              <th className="px-3 py-2">EOS image (ZTP)</th>
               <th className="px-3 py-2">Last seen</th>
               <th className="px-3 py-2">Events</th>
               <th className="px-3 py-2 text-right">Actions</th>
@@ -40,10 +45,11 @@ export default function Devices() {
           </thead>
           <tbody>
             {devices.map((d) => (
-              <DeviceRow key={d.name} d={d} onView={setViewerHost} onChange={refresh} />
+              <DeviceRow key={d.name} d={d} images={images}
+                onView={setViewerHost} onChange={refresh} />
             ))}
             {devices.length === 0 && (
-              <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
+              <tr><td colSpan={10} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -61,14 +67,22 @@ export default function Devices() {
   );
 }
 
-function DeviceRow({ d, onView, onChange }: {
-  d: Device; onView: (h: string) => void; onChange: () => void;
+function DeviceRow({ d, images, onView, onChange }: {
+  d: Device; images: EosImage[];
+  onView: (h: string) => void; onChange: () => void;
 }) {
   const isManaged = d.source === "managed";
   const remove = async () => {
     if (!confirm(`Remove managed device ${d.name}? This drops the dnsmasq reservation.`)) return;
     try { await api.deleteManagedDevice(d.name); onChange(); }
     catch (e) { alert(`Failed: ${e}`); }
+  };
+  const onImageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value;
+    try {
+      await api.setDeviceEosImage(d.name, v === "" ? null : v);
+      onChange();
+    } catch (err) { alert(`Failed: ${err}`); }
   };
   const sourceBadge = (
     <span className={`px-2 py-0.5 text-[10px] rounded mono border ${
@@ -88,6 +102,19 @@ function DeviceRow({ d, onView, onChange }: {
       <td className="px-3 py-2"><StatusPill event={d.last_event} /></td>
       <td className="px-3 py-2 mono">{d.mac ?? "-"}</td>
       <td className="px-3 py-2 mono">{d.ip ?? "-"}</td>
+      <td className="px-3 py-2">
+        <select
+          value={d.eos_image ?? ""}
+          onChange={onImageChange}
+          className="mono text-xs bg-slate-900 border border-slate-700 rounded px-2 py-1"
+          title="EOS image to flash on next ZTP. '(skip upgrade)' = leave the running image alone."
+        >
+          <option value="">(skip upgrade)</option>
+          {images.map((img) => (
+            <option key={img.filename} value={img.filename}>{img.filename}</option>
+          ))}
+        </select>
+      </td>
       <td className="px-3 py-2 mono text-xs text-slate-400">{d.last_seen ?? "-"}</td>
       <td className="px-3 py-2">{d.event_count ?? 0}</td>
       <td className="px-3 py-2 text-right">

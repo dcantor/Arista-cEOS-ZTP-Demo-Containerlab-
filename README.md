@@ -95,6 +95,26 @@ The per-managed-device **Delete** button reverses this (drops the
 reservation and removes the script; the config file is left in place).
 Backed by `GET/POST/DELETE /api/managed-devices`.
 
+#### Per-device EOS image (ZTP-time upgrade)
+
+The **EOS image (ZTP)** column on the Devices grid is a dropdown of
+every `.swi` file in the project's `eos_images/` directory plus a
+`(skip upgrade)` option (the default).
+
+When set, the next ZTP cycle on that device will:
+1. download the chosen `.swi` from `GET /eos-images/<filename>`,
+2. write `SWI=flash:<filename>` to `/mnt/flash/boot-config`,
+3. write the per-host startup-config,
+4. reboot — coming back up on the new image.
+
+When set to `(skip upgrade)` (or unset), the bootstrap script leaves
+the running image alone and only applies the config. The selection
+persists in SQLite (`device_settings` table). Backed by
+`GET /api/eos-images`, `GET/PUT /api/devices/<host>/eos-image`,
+`GET /eos-images/<filename>` (raw download), and
+`GET /ztp/eos-image/<host>` (plain-text endpoint the bootstrap script
+curls to learn its target).
+
 The **Live ZTP Viewer** button per row opens a drawer that streams
 `docker logs -f` for the *wrapper container* (qemu launcher output);
 for the **vEOS VM's** serial console, telnet to the container IP on

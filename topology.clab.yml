@@ -36,6 +36,7 @@ topology:
         - ztp-content:/ztp-content
         - dhcp-state:/dhcp-state          # rw: app writes managed.conf for dnsmasq to include
         - data:/data
+        - eos_images:/eos_images:ro       # served via /eos-images/{name} during ZTP
         - /var/run/docker.sock:/var/run/docker.sock
 
     # ---- vEOS nodes ----

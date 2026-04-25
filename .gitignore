@@ -5,6 +5,7 @@ ztp-server/app/ui/node_modules/
 ztp-server/app/ui/dist/
 data/
 dhcp-state/
+/eos_images
 
 # the vEOS image is multi-hundred-MB, never commit it
 vEOS-lab*.qcow2
