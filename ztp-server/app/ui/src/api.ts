@@ -4,10 +4,25 @@ export type Device = {
   status: string;
   mac: string | null;
   ip: string | null;
+  source?: "topology" | "managed" | "absent";
+  eos_image?: string | null;
   first_seen?: string;
   last_seen?: string;
   last_event?: string;
   event_count?: number;
+};
+
+export type EosImage = {
+  filename: string;
+  size: number;
+  mtime: number;
+};
+
+export type ManagedDevice = {
+  name: string;
+  mac: string;
+  mgmt_ip: string;
+  created_at: string;
 };
 
 export type Lease = {
@@ -63,5 +78,32 @@ export const api = {
     j<{ node: string; status: string; source_url: string }>(
       `/api/devices/${host}/apply-config`,
       { method: "POST" },
+    ),
+  managedDevices: () => j<ManagedDevice[]>("/api/managed-devices"),
+  addManagedDevice: (name: string, mac: string, mgmt_ip: string) =>
+    j<ManagedDevice>("/api/managed-devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, mac, mgmt_ip }),
+    }),
+  deleteManagedDevice: (name: string) =>
+    j<{ ok: boolean; name: string }>(`/api/managed-devices/${name}`, {
+      method: "DELETE",
+    }),
+  updateManagedDevice: (name: string, mac: string, mgmt_ip: string) =>
+    j<ManagedDevice>(`/api/managed-devices/${name}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mac, mgmt_ip }),
+    }),
+  eosImages: () => j<EosImage[]>("/api/eos-images"),
+  setDeviceEosImage: (host: string, eos_image: string | null) =>
+    j<{ host: string; eos_image: string | null }>(
+      `/api/devices/${host}/eos-image`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eos_image }),
+      },
     ),
 };

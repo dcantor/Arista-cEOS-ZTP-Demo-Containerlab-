@@ -63,22 +63,31 @@ def apply_config(node_name: str, server_url: str = "http://172.30.0.20") -> dict
     eAPI (HTTP JSON-RPC) over the device's post-ZTP management IP. No
     VM reboot, no container restart.
     """
-    # Map node name → post-ZTP management IP. Matches the per-host config
-    # files in ztp-content/configs.
-    mgmt_ip_by_node = {
+    # Resolve mgmt IP: topology nodes have static post-ZTP IPs; managed
+    # devices come from the SQLite table (added via the UI).
+    topology_ip_by_node = {
         "spine1": "172.30.0.101",
         "spine2": "172.30.0.102",
         "leaf1":  "172.30.0.103",
         "leaf2":  "172.30.0.104",
     }
-    if node_name not in mgmt_ip_by_node:
+    mgmt_ip = topology_ip_by_node.get(node_name)
+    if mgmt_ip is None:
+        # Lazy import keeps docker_ctl import-clean for the cron-like
+        # callers that don't need the DB.
+        import db
+        for d in db.list_managed_devices():
+            if d["name"] == node_name:
+                mgmt_ip = d["mgmt_ip"]
+                break
+    if mgmt_ip is None:
         raise ValueError(f"unknown node: {node_name}")
 
     import httpx
 
     url = f"{server_url}/configs/{node_name}.cfg"
     # vEOS exposes eAPI on HTTPS:443 by default with a self-signed cert.
-    eapi_url = f"https://{mgmt_ip_by_node[node_name]}/command-api"
+    eapi_url = f"https://{mgmt_ip}/command-api"
     body = {
         "jsonrpc": "2.0",
         "method": "runCmds",
