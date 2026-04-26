@@ -1,23 +1,33 @@
 LAB := ztp-universal-demo
 TOPO := topology.clab.yml
+CEOS := spine1 spine2 leaf1 leaf2
+APP_URL := http://localhost:8080
 
-.PHONY: help build build-dnsmasq build-app build-veos deploy destroy redeploy ps dhcp-logs app-logs ztp-events ui-dev console-spine1 console-spine2 console-leaf1 console-leaf2
+.PHONY: help build build-dnsmasq build-app build-veos \
+        deploy deploy-with-vms destroy redeploy \
+        start-vms stop-vms \
+        ps dhcp-logs app-logs ztp-events ui-dev \
+        console-spine1 console-spine2 console-leaf1 console-leaf2
 
 help:
 	@echo "Targets:"
-	@echo "  build         Build all three Docker images (dnsmasq + ztp-app + veos-launcher)"
-	@echo "  build-app     Build only the ztp-app image (UI + FastAPI backend)"
-	@echo "  build-dnsmasq Build only the dnsmasq image"
-	@echo "  build-veos    Build only the veos-launcher image (QEMU wrapper)"
-	@echo "  deploy        Bring up the ZTP lab (servers + 4 vEOS VMs)"
-	@echo "                UI on http://<host>:8080"
-	@echo "  destroy       Tear down the lab"
-	@echo "  redeploy      Destroy then deploy (everything)"
-	@echo "  ps            Show lab containers and addresses"
-	@echo "  dhcp-logs     Tail dnsmasq logs (DHCP exchanges)"
-	@echo "  app-logs      Tail ztp-app (FastAPI) logs"
-	@echo "  ztp-events    Show only the ZTP /log POSTs"
-	@echo "  ui-dev        Run UI dev server (vite) against the deployed lab's API"
+	@echo "  build           Build all three Docker images (dnsmasq + ztp-app + veos-launcher)"
+	@echo "  build-app       Build only the ztp-app image (UI + FastAPI backend)"
+	@echo "  build-dnsmasq   Build only the dnsmasq image"
+	@echo "  build-veos      Build only the veos-launcher image (QEMU wrapper)"
+	@echo "  deploy          Bring up the lab — servers + 4 vEOS wrappers, VMs STOPPED."
+	@echo "                  UI on http://<host>:8080. Click Start per device or run"
+	@echo "                  'make start-vms' to boot all four."
+	@echo "  deploy-with-vms deploy + immediately start all 4 vEOS VMs (old behavior)"
+	@echo "  start-vms       Start every vEOS VM via the app API (POST /api/devices/<n>/start)"
+	@echo "  stop-vms        Stop every vEOS VM via the app API"
+	@echo "  destroy         Tear down the lab"
+	@echo "  redeploy        Destroy then deploy (only way to re-run ZTP — see Limitations)"
+	@echo "  ps              Show lab containers and addresses"
+	@echo "  dhcp-logs       Tail dnsmasq logs (DHCP exchanges)"
+	@echo "  app-logs        Tail ztp-app (FastAPI) logs"
+	@echo "  ztp-events      Show only the ZTP /log POSTs"
+	@echo "  ui-dev          Run UI dev server (vite) against the deployed lab's API"
 	@echo "  console-<node>  Open vEOS serial console over telnet (console-spine1 ...)"
 
 build: build-dnsmasq build-app build-veos
@@ -35,8 +45,25 @@ deploy: build
 	sudo containerlab deploy -t $(TOPO)
 	@echo ""
 	@echo "  UI ready: http://$$(hostname -I | awk '{print $$1}'):8080"
-	@echo "  (vEOS VMs take ~3-5 min each to boot and complete ZTP)"
+	@echo "  vEOS VMs are STOPPED — click Start per device in the UI or run"
+	@echo "  'make start-vms' to boot all four (3-5 min boot + ZTP per node)."
 	@echo ""
+
+deploy-with-vms: deploy start-vms
+
+# Bulk control of every vEOS VM in the lab via the app's REST API.
+# Each per-node call is idempotent server-side, so re-running these is safe.
+start-vms:
+	@for n in $(CEOS); do \
+	  echo "==> POST $(APP_URL)/api/devices/$$n/start"; \
+	  curl -fsS -X POST $(APP_URL)/api/devices/$$n/start | python3 -m json.tool || exit 1; \
+	done
+
+stop-vms:
+	@for n in $(CEOS); do \
+	  echo "==> POST $(APP_URL)/api/devices/$$n/stop"; \
+	  curl -fsS -X POST $(APP_URL)/api/devices/$$n/stop | python3 -m json.tool || exit 1; \
+	done
 
 destroy:
 	sudo containerlab destroy -t $(TOPO) --cleanup
