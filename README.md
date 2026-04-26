@@ -1,22 +1,36 @@
-# Arista vEOS ZTP Demo (Containerlab)
+# Network ZTP Service
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-End-to-end Zero Touch Provisioning lab for Arista **vEOS** (the full
-QEMU/KVM virtual machine), with a built-in web dashboard. Four switches
-(2 spines + 2 leaves) boot from a fresh qcow2 overlay with **no
-startup-config**, broadcast DHCP on Management1, and pull per-device
-configuration from the ZTP server. The whole stack — DHCP server,
-ZTP/UI app, and the four vEOS VMs — comes up with a single
-`containerlab deploy`.
+Multi-vendor Zero Touch Provisioning lab — Arista EOS, Cisco IOS-XE,
+and Cisco NX-OS — with a built-in web dashboard. Switches boot from a
+fresh qcow2 overlay with **no startup-config**, DHCP on their
+management interface, and pull per-device configuration from the ZTP
+server. The whole stack — DHCP server, TFTP server, ZTP/UI app, and
+the VMs — comes up with a single `containerlab deploy`.
 
-> **You must supply your own Arista images.** This repo is MIT-licensed
-> but **does not include** the proprietary `vEOS-lab-X.Y.Z.qcow2` boot
-> disk or any `.swi` software images. Download them yourself from the
-> Arista support site (a free arista.com account is enough) and drop
-> them into the project root (`vEOS-lab-*.qcow2`) and `eos_images/`
-> respectively. Both paths are gitignored so they never accidentally
-> end up in your fork. See [LICENSE](LICENSE) for details.
+Default topology: 2 Arista vEOS spines + 2 Arista vEOS leaves on a
+spine/leaf eBGP underlay, plus 1 Cisco CSR1000v (IOS-XE) and 1 Cisco
+Nexus 9300v (NX-OS) standalone for multi-vendor demos.
+
+```bash
+git clone https://github.com/dcantor/Network_ZTP_Service.git
+cd Network_ZTP_Service
+make deploy
+```
+
+> **You must supply your own switch images.** This repo is MIT-licensed
+> but **does not include** any vendor images. Download them yourself
+> from each vendor's support site (free accounts are enough for the
+> lab images) and drop them into:
+>
+> - `vEOS-lab-*.qcow2`   (project root)  — Arista vEOS-lab boot disk
+> - `eos_images/*.swi`                   — Arista EOS software images for ZTP-time upgrade
+> - `iosxe-images/*.qcow2`               — Cisco IOS-XE (CSR1000v / Catalyst 8000v)
+> - `nxos-images/*.qcow2`                — Cisco NX-OS (Nexus 9300v / 9000v)
+>
+> All four paths are gitignored so vendor images never end up in your
+> fork. See [LICENSE](LICENSE) for details.
 
 > Earlier revisions of this lab used cEOS-lab containers. We migrated to
 > vEOS to get a real, full-feature EOS image (no `reload now` block, no
