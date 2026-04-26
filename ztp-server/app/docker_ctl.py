@@ -11,11 +11,12 @@ LAB_NAME = "ztp-universal-demo"
 # (rather than parsed from topology.clab.yml at runtime) because the file
 # isn't bind-mounted into the app container.
 TOPOLOGY_VENDORS = {
-    "spine1": "arista",
-    "spine2": "arista",
-    "leaf1":  "arista",
-    "leaf2":  "arista",
-    "leaf101": "cisco",
+    "spine1":  "arista",
+    "spine2":  "arista",
+    "leaf1":   "arista",
+    "leaf2":   "arista",
+    "leaf101": "cisco",   # CSR1000v / IOS-XE
+    "leaf201": "nexus",   # Nexus 9300v / NX-OS
 }
 # Short names of the *topology* nodes (any vendor). Used to enumerate
 # devices since the wrapper containers are kind:linux and don't
@@ -120,13 +121,15 @@ def apply_config(node_name: str, server_url: str = "http://172.30.0.20") -> dict
     eAPI (HTTP JSON-RPC) over the device's post-ZTP management IP. No
     VM reboot, no container restart.
 
-    Arista-only: Cisco IOS-XE has no eAPI. To regenerate a Cisco device's
-    config you currently need to Stop+Start it (which re-runs ZTP).
+    Arista-only: Cisco IOS-XE / NX-OS have no eAPI. To regenerate a
+    Cisco device's config you currently need to Stop+Start it (which
+    re-runs ZTP / POAP).
     """
-    if TOPOLOGY_VENDORS.get(node_name, "arista") != "arista":
+    vendor = TOPOLOGY_VENDORS.get(node_name, "arista")
+    if vendor != "arista":
         raise ValueError(
             f"apply-config (live) is Arista-only; {node_name} is "
-            f"{TOPOLOGY_VENDORS.get(node_name)}. Stop+Start to re-run ZTP."
+            f"{vendor}. Stop+Start to re-run ZTP/POAP."
         )
     # Resolve mgmt IP: topology nodes have static post-ZTP IPs; managed
     # devices come from the SQLite table (added via the UI).

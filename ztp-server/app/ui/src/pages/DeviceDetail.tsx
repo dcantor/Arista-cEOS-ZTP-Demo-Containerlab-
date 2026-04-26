@@ -62,17 +62,17 @@ export default function DeviceDetail() {
 
       <div className="flex items-center gap-3 mb-6">
         {(() => {
-          const isCisco = device?.vendor === "cisco";
+          const isArista = (device?.vendor ?? "arista") === "arista";
           return (
             <button
               onClick={apply}
-              disabled={busy || !device?.container || isCisco}
+              disabled={busy || !device?.container || !isArista}
               className="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-sm"
-              title={isCisco
-                ? "Apply config (live) is Arista-only. Stop+Start the device to re-run ZTP and pick up config changes."
+              title={!isArista
+                ? "Apply config (live) is Arista-only. Stop+Start the device to re-run ZTP/POAP and pick up config changes."
                 : "Push the served per-host config into running + startup via FastCli configure replace. No reboot."}
             >
-              {busy ? "Applying…" : isCisco ? "Apply config (live) — Arista only" : "Apply config (live)"}
+              {busy ? "Applying…" : !isArista ? "Apply config (live) — Arista only" : "Apply config (live)"}
             </button>
           );
         })()}

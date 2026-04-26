@@ -48,6 +48,15 @@ _VENDOR_PROFILES = {
         "nic": "e1000",
         "default_img_fallback": "/csr.qcow2",
     },
+    "nexus": {
+        # Nexus 9300v lite: 4 GB is enough; full needs 8 GB. virtio disk
+        # works; e1000 NIC keeps interface ordering predictable.
+        "ram": 4096,
+        "smp": 2,
+        "disk_if": "virtio",
+        "nic": "e1000",
+        "default_img_fallback": "/nxos.qcow2",
+    },
 }
 
 # OUI 52:54:00 = QEMU. Last 3 bytes derive from NODE_NAME so a given node

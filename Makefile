@@ -1,13 +1,13 @@
 LAB := ztp-universal-demo
 TOPO := topology.clab.yml
-CEOS := spine1 spine2 leaf1 leaf2
+CEOS := spine1 spine2 leaf1 leaf2 leaf101 leaf201
 APP_URL := http://localhost:8080
 
 .PHONY: help build build-dnsmasq build-app build-veos \
         deploy deploy-with-vms destroy redeploy \
         start-vms stop-vms \
         ps dhcp-logs app-logs ztp-events ui-dev \
-        console-spine1 console-spine2 console-leaf1 console-leaf2 console-leaf101
+        console-spine1 console-spine2 console-leaf1 console-leaf2 console-leaf101 console-leaf201
 
 help:
 	@echo "Targets:"
@@ -110,3 +110,4 @@ console-spine2:  ; $(call console_target,spine2)
 console-leaf1:   ; $(call console_target,leaf1)
 console-leaf2:   ; $(call console_target,leaf2)
 console-leaf101: ; $(call console_target,leaf101)
+console-leaf201: ; $(call console_target,leaf201)

@@ -27,8 +27,9 @@ import leases
 
 CONTENT_ROOT = Path(os.environ.get("ZTP_CONTENT_ROOT", "/ztp-content"))
 STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", "/app/static"))
-EOS_IMAGES_ROOT = Path(os.environ.get("EOS_IMAGES_ROOT", "/eos_images"))
+EOS_IMAGES_ROOT   = Path(os.environ.get("EOS_IMAGES_ROOT",   "/eos_images"))
 IOSXE_IMAGES_ROOT = Path(os.environ.get("IOSXE_IMAGES_ROOT", "/iosxe-images"))
+NXOS_IMAGES_ROOT  = Path(os.environ.get("NXOS_IMAGES_ROOT",  "/nxos-images"))
 HOST_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 # Either an Arista .swi or a Cisco .qcow2 / .bin / .iso image filename.
 EOS_IMAGE_RE = re.compile(r"^[A-Za-z0-9._-]+\.(swi|qcow2|bin|iso|tar)$")
@@ -36,6 +37,7 @@ EOS_IMAGE_RE = re.compile(r"^[A-Za-z0-9._-]+\.(swi|qcow2|bin|iso|tar)$")
 _IMAGE_DIR_BY_VENDOR = {
     "arista": EOS_IMAGES_ROOT,
     "cisco":  IOSXE_IMAGES_ROOT,
+    "nexus":  NXOS_IMAGES_ROOT,
 }
 # Strip ANSI escape sequences (CSI ... final byte) from terminal output so the
 # log stream renders cleanly as plain text in the browser.

@@ -144,6 +144,8 @@ function DeviceRow({ d, images, onView, onChange }: {
         <span className={`px-2 py-0.5 text-[10px] rounded mono border ${
           d.vendor === "cisco"
             ? "bg-orange-500/10 text-orange-300 border-orange-500/40"
+          : d.vendor === "nexus"
+            ? "bg-violet-500/10 text-violet-300 border-violet-500/40"
             : "bg-cyan-500/10 text-cyan-300 border-cyan-500/40"
         }`}>{d.vendor ?? "arista"}</span>
       </td>
