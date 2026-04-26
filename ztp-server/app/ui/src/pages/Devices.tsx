@@ -3,13 +3,42 @@ import { Link } from "react-router-dom";
 import { api, Device, EosImage } from "../api";
 import { useSSE } from "../hooks/useSSE";
 import StatusPill from "../components/StatusPill";
-import LogDrawer from "../components/LogDrawer";
+import LogDrawer, { View, ViewKind } from "../components/LogDrawer";
 
 export default function Devices() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [images, setImages] = useState<EosImage[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [viewer, setViewer] = useState<{ host: string; kind: "logs" | "console" } | null>(null);
+  const [views, setViews] = useState<View[]>([]);
+  const [activeIdx, setActiveIdx] = useState<number>(0);
+
+  const openView = (host: string, kind: ViewKind) => {
+    setViews((vs) => {
+      const i = vs.findIndex((v) => v.host === host && v.kind === kind);
+      if (i >= 0) {
+        setActiveIdx(i);
+        return vs;
+      }
+      setActiveIdx(vs.length);
+      return [...vs, { host, kind }];
+    });
+  };
+  const closeView = (idx: number) => {
+    setViews((vs) => {
+      const next = vs.filter((_, i) => i !== idx);
+      setActiveIdx((cur) => {
+        if (next.length === 0) return 0;
+        if (cur === idx) return Math.min(idx, next.length - 1);
+        if (cur > idx) return cur - 1;
+        return cur;
+      });
+      return next;
+    });
+  };
+  const closeAllViews = () => {
+    setViews([]);
+    setActiveIdx(0);
+  };
 
   const refresh = () => {
     api.devices().then(setDevices).catch((e) => setError(String(e)));
@@ -48,7 +77,7 @@ export default function Devices() {
           <tbody>
             {devices.map((d) => (
               <DeviceRow key={d.name} d={d} images={images}
-                onView={(host, kind) => setViewer({ host, kind })} onChange={refresh} />
+                onView={openView} onChange={refresh} />
             ))}
             {devices.length === 0 && (
               <tr><td colSpan={12} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
@@ -59,13 +88,16 @@ export default function Devices() {
 
       <AddDeviceForm onAdded={refresh} />
 
-      {viewer && (
+      {views.length > 0 && (
         <>
+          {/* spacer so the table doesn't sit under the drawer */}
           <div className="h-[45vh]" aria-hidden />
           <LogDrawer
-            host={viewer.host}
-            source={viewer.kind}
-            onClose={() => setViewer(null)}
+            views={views}
+            activeIdx={activeIdx}
+            onActivate={setActiveIdx}
+            onClose={closeView}
+            onCloseAll={closeAllViews}
           />
         </>
       )}
@@ -75,7 +107,7 @@ export default function Devices() {
 
 function DeviceRow({ d, images, onView, onChange }: {
   d: Device; images: EosImage[];
-  onView: (host: string, kind: "logs" | "console") => void;
+  onView: (host: string, kind: ViewKind) => void;
   onChange: () => void;
 }) {
   const isManaged = d.source === "managed";
