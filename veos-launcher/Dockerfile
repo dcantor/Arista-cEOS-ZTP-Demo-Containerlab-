@@ -4,6 +4,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qy \
  && apt-get install -y --no-install-recommends \
       qemu-kvm qemu-utils \
+      ovmf \
       bridge-utils iproute2 iputils-ping \
       python3 python3-yaml \
       socat telnet ca-certificates \

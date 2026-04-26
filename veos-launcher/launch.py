@@ -49,12 +49,15 @@ _VENDOR_PROFILES = {
         "default_img_fallback": "/csr.qcow2",
     },
     "nexus": {
-        # Nexus 9300v lite: 4 GB is enough; full needs 8 GB. virtio disk
-        # works; e1000 NIC keeps interface ordering predictable.
-        "ram": 4096,
-        "smp": 2,
-        "disk_if": "virtio",
+        # Nexus 9300v / 9000v: 10 GB RAM, 4 vCPUs, UEFI, AHCI/SATA
+        # disk topology (NOT virtio or plain IDE). vrnetlab's working
+        # recipe (cisco/n9kv/docker/launch.py); the AHCI bus is what the
+        # bootloader expects when it looks for "bootflash".
+        "ram": 10240,
+        "smp": 4,
+        "disk_if": "ahci",   # consumed by main; we override the -drive args
         "nic": "e1000",
+        "firmware": "uefi",
         "default_img_fallback": "/nxos.qcow2",
     },
 }
@@ -119,10 +122,13 @@ def get_v4(intf: str) -> str | None:
 
 
 def setup_iface_for_qemu(intf: str, br: str, tap: str):
-    """Move `intf`'s netns interface into a bridge with a tap. Strip its IP
-    so the VM owns L3 on this broadcast domain. Put `intf` in promiscuous
-    mode so frames destined for the VM's MAC (which differs from `intf`'s
-    MAC) are accepted instead of dropped at the kernel ingress.
+    """Move `intf`'s netns interface into a bridge with a tap, then put
+    the original IP back on the bridge so the wrapper container is still
+    reachable from the host (for `docker exec`, port forwards, VNC, etc.).
+    The VM gets to own its OWN L3 (via DHCP/static config to a different
+    IP) on the same L2 — both wrapper and VM share the bridge, distinct
+    MACs, distinct IPs. `intf` goes promiscuous so frames destined for
+    the VM's MAC are accepted instead of dropped at kernel ingress.
     """
     saved_ip = get_v4(intf)
     if saved_ip:
@@ -135,7 +141,12 @@ def setup_iface_for_qemu(intf: str, br: str, tap: str):
     run(["ip", "link", "set", intf, "up"])
     run(["ip", "link", "set", tap, "up"])
     run(["ip", "link", "set", br, "up"])
-    return saved_ip  # returned for diagnostic logging only
+    # Reattach the IP to the bridge so the wrapper container retains
+    # L3 connectivity (docker-proxy / VNC port forwards / SSH would
+    # otherwise fail because the container has no reachable address).
+    if saved_ip:
+        run(["ip", "addr", "add", saved_ip, "dev", br])
+    return saved_ip
 
 
 def main():
@@ -196,12 +207,47 @@ def main():
         "-cpu", "host",
         "-smp", str(smp),
         "-m", str(ram),
-        "-drive", f"file={overlay},if={profile['disk_if']},cache=writeback",
-        "-nographic",
         "-serial", "telnet:0.0.0.0:5000,server,nowait",
         "-monitor", "none",
-        *qemu_netargs,
     ]
+    # UEFI firmware (OVMF) for vendors whose images are GPT-partitioned
+    # and won't boot under legacy SeaBIOS. We give the VM a *copy* of
+    # OVMF_VARS so each VM has its own NVRAM.
+    if profile.get("firmware") == "uefi":
+        ovmf_code = "/usr/share/OVMF/OVMF_CODE.fd"
+        ovmf_vars_template = "/usr/share/OVMF/OVMF_VARS.fd"
+        per_node_vars = overlay_dir / f"{NODE_NAME}_OVMF_VARS.fd"
+        if not per_node_vars.exists():
+            run(["cp", ovmf_vars_template, str(per_node_vars)])
+        qemu += [
+            "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
+            "-drive", f"if=pflash,format=raw,file={per_node_vars}",
+        ]
+    # Main disk attachment. Vendors that need AHCI/SATA (nexus) use a
+    # specific block device topology — the shorthand `-drive ... if=ide`
+    # or `if=virtio` is NOT what their bootloader expects. Mirror the
+    # vrnetlab n9kv recipe.
+    if profile["disk_if"] == "ahci":
+        qemu += [
+            "-boot", "c",
+            "-drive", f"file={overlay},if=none,id=drive-sata-disk0,format=qcow2,cache=writeback",
+            "-device", "ahci,id=ahci0,bus=pci.0",
+            "-device", "ide-hd,drive=drive-sata-disk0,bus=ahci0.0,id=drive-sata-disk0,bootindex=1",
+        ]
+    else:
+        qemu += [
+            "-drive", f"file={overlay},if={profile['disk_if']},cache=writeback",
+        ]
+    qemu += qemu_netargs
+    # Vendors whose first-boot bootloader prints to VGA (not serial) need
+    # a VNC display so a human can actually see what's happening. nexus9000v
+    # is the prime offender — SeaBIOS + GRUB output go to VGA only. We
+    # expose VNC inside the wrapper on :0 (TCP 5900); the topology can
+    # publish that port to the host for a Nexus node.
+    if VENDOR == "nexus":
+        qemu += ["-vga", "std", "-vnc", "0.0.0.0:0"]
+    else:
+        qemu += ["-nographic"]
 
     # Persist the QEMU command for vm-start.sh / vm-stop.sh — they're the
     # entry points the ztp-app uses (via docker exec) to control VM

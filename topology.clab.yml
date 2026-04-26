@@ -142,6 +142,11 @@ topology:
         VENDOR: nexus
       devices: [/dev/kvm, /dev/net/tun]
       cap-add: [NET_ADMIN, NET_RAW, SYS_NICE]
+      ports:
+        # VNC (5900 inside the wrapper) -> host:5901 so we can SEE what
+        # the NX-OS bootloader is doing — its early boot prints go to
+        # VGA, not serial. From the lab host: vncviewer localhost:5901
+        - "5901:5900"
       binds:
         - nxos-images/nexus9300v64-lite.10.5.5.M.qcow2:/vm-image.qcow2:ro
         - data/veos-overlay:/overlay
