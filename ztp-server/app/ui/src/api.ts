@@ -5,6 +5,7 @@ export type Device = {
   mac: string | null;
   ip: string | null;
   source?: "topology" | "managed" | "absent";
+  vendor?: "arista" | "cisco";
   eos_image?: string | null;
   vm_status?: "running" | "stopped" | "unknown";
   first_seen?: string;
@@ -17,6 +18,7 @@ export type EosImage = {
   filename: string;
   size: number;
   mtime: number;
+  vendor?: "arista" | "cisco";
 };
 
 export type ManagedDevice = {

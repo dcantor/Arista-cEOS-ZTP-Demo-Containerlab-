@@ -22,11 +22,33 @@ import time
 from pathlib import Path
 
 NODE_NAME = os.environ.get("NODE_NAME", "veos")
-VEOS_IMG  = os.environ.get("VEOS_IMG", "/vEOS.qcow2")
+VENDOR    = os.environ.get("VENDOR", "arista").lower()  # "arista" or "cisco"
+# /vm-image.qcow2 is the canonical bind path; VEOS_IMG kept for backward compat.
+VM_IMG    = os.environ.get("VM_IMG") or os.environ.get("VEOS_IMG") or "/vm-image.qcow2"
 VEOS_RAM  = int(os.environ.get("VEOS_RAM", "2048"))
 VEOS_SMP  = int(os.environ.get("VEOS_SMP", "2"))
 VM_AUTOSTART = os.environ.get("VM_AUTOSTART", "false").lower() in ("true", "1", "yes")
 QEMU_CMD_FILE = Path("/tmp/qemu-cmd.sh")
+
+# Vendor profile: per-vendor QEMU defaults. Anything not overridden by env
+# falls back here.
+_VENDOR_PROFILES = {
+    "arista": {
+        "ram": 2048,
+        "smp": 2,
+        "disk_if": "virtio",
+        "nic": "e1000",
+        "default_img_fallback": "/vEOS.qcow2",
+    },
+    "cisco": {
+        # CSR1000v needs more RAM and IDE disk attachment.
+        "ram": 4096,
+        "smp": 2,
+        "disk_if": "ide",
+        "nic": "e1000",
+        "default_img_fallback": "/csr.qcow2",
+    },
+}
 
 # OUI 52:54:00 = QEMU. Last 3 bytes derive from NODE_NAME so a given node
 # always gets the same MAC across deploys (and rebuilds).
@@ -108,8 +130,21 @@ def setup_iface_for_qemu(intf: str, br: str, tap: str):
 
 
 def main():
-    if not Path(VEOS_IMG).exists():
-        sys.exit(f"vEOS image {VEOS_IMG} not found (bind-mount it).")
+    profile = _VENDOR_PROFILES.get(VENDOR)
+    if profile is None:
+        sys.exit(f"unknown VENDOR {VENDOR!r}; supported: {sorted(_VENDOR_PROFILES)}")
+    img_path = Path(VM_IMG)
+    if not img_path.exists():
+        # Fall back to vendor-default mount point (back-compat for arista
+        # topologies that bind to /vEOS.qcow2 without setting VM_IMG).
+        alt = Path(profile["default_img_fallback"])
+        if alt.exists():
+            img_path = alt
+        else:
+            sys.exit(f"VM image not found at {VM_IMG} or {alt} (bind-mount it).")
+    print(f"[{NODE_NAME}] vendor={VENDOR} image={img_path} "
+          f"ram={profile['ram']}MB smp={profile['smp']} disk_if={profile['disk_if']}",
+          flush=True)
 
     interfaces = wait_for_interfaces_to_settle()
     if not interfaces:
@@ -126,7 +161,7 @@ def main():
               flush=True)
         qemu_netargs += [
             "-netdev", f"tap,id=n{idx},ifname={tap},script=no,downscript=no",
-            "-device", f"e1000,netdev=n{idx},mac={mac}",
+            "-device", f"{profile['nic']},netdev=n{idx},mac={mac}",
         ]
 
     # Persistent qcow2 overlay so the VM's writes (post-ZTP startup-config,
@@ -136,9 +171,13 @@ def main():
     overlay_dir.mkdir(exist_ok=True)
     overlay = overlay_dir / f"{NODE_NAME}.qcow2"
     if not overlay.exists():
-        print(f"[{NODE_NAME}] creating overlay {overlay} backed by {VEOS_IMG}", flush=True)
+        print(f"[{NODE_NAME}] creating overlay {overlay} backed by {img_path}", flush=True)
         run(["qemu-img", "create", "-f", "qcow2",
-             "-F", "qcow2", "-b", VEOS_IMG, str(overlay)])
+             "-F", "qcow2", "-b", str(img_path), str(overlay)])
+
+    # Per-vendor RAM/SMP can be overridden via env (VEOS_RAM/VEOS_SMP).
+    ram = VEOS_RAM if "VEOS_RAM" in os.environ else profile["ram"]
+    smp = VEOS_SMP if "VEOS_SMP" in os.environ else profile["smp"]
 
     qemu = [
         "qemu-system-x86_64",
@@ -146,9 +185,9 @@ def main():
         "-enable-kvm",
         "-machine", "pc,accel=kvm",
         "-cpu", "host",
-        "-smp", str(VEOS_SMP),
-        "-m", str(VEOS_RAM),
-        "-drive", f"file={overlay},if=virtio,cache=writeback",
+        "-smp", str(smp),
+        "-m", str(ram),
+        "-drive", f"file={overlay},if={profile['disk_if']},cache=writeback",
         "-nographic",
         "-serial", "telnet:0.0.0.0:5000,server,nowait",
         "-monitor", "none",

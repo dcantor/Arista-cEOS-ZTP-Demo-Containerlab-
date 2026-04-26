@@ -32,6 +32,7 @@ export default function Devices() {
           <thead className="bg-slate-900 text-slate-400 text-left">
             <tr>
               <th className="px-3 py-2">Node</th>
+              <th className="px-3 py-2">Vendor</th>
               <th className="px-3 py-2">Source</th>
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">VM</th>
@@ -50,7 +51,7 @@ export default function Devices() {
                 onView={setViewerHost} onChange={refresh} />
             ))}
             {devices.length === 0 && (
-              <tr><td colSpan={11} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
+              <tr><td colSpan={12} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -139,6 +140,13 @@ function DeviceRow({ d, images, onView, onChange }: {
       <td className="px-3 py-2 mono">
         <Link to={`/devices/${d.name}`} className="text-sky-300 hover:underline">{d.name}</Link>
       </td>
+      <td className="px-3 py-2">
+        <span className={`px-2 py-0.5 text-[10px] rounded mono border ${
+          d.vendor === "cisco"
+            ? "bg-orange-500/10 text-orange-300 border-orange-500/40"
+            : "bg-cyan-500/10 text-cyan-300 border-cyan-500/40"
+        }`}>{d.vendor ?? "arista"}</span>
+      </td>
       <td className="px-3 py-2">{sourceBadge}</td>
       <td className="px-3 py-2">{d.status}</td>
       <td className="px-3 py-2">{vmPill}</td>
@@ -164,17 +172,27 @@ function DeviceRow({ d, images, onView, onChange }: {
         ) : (d.ip ?? "-")}
       </td>
       <td className="px-3 py-2">
-        <select
-          value={d.eos_image ?? ""}
-          onChange={onImageChange}
-          className="mono text-xs bg-slate-900 border border-slate-700 rounded px-2 py-1"
-          title="EOS image to flash on next ZTP. '(skip upgrade)' = leave the running image alone."
-        >
-          <option value="">(skip upgrade)</option>
-          {images.map((img) => (
-            <option key={img.filename} value={img.filename}>{img.filename}</option>
-          ))}
-        </select>
+        {(() => {
+          const vend = d.vendor ?? "arista";
+          // Only show images that match this device's vendor; managed
+          // rows (no vendor known) get the full list.
+          const opts = d.source === "managed"
+            ? images
+            : images.filter((img) => (img.vendor ?? "arista") === vend);
+          return (
+            <select
+              value={d.eos_image ?? ""}
+              onChange={onImageChange}
+              className="mono text-xs bg-slate-900 border border-slate-700 rounded px-2 py-1"
+              title={`Image to flash on next ZTP. (skip upgrade) leaves the running image alone. Filtered to ${vend}.`}
+            >
+              <option value="">(skip upgrade)</option>
+              {opts.map((img) => (
+                <option key={img.filename} value={img.filename}>{img.filename}</option>
+              ))}
+            </select>
+          );
+        })()}
       </td>
       <td className="px-3 py-2 mono text-xs text-slate-400">{d.last_seen ?? "-"}</td>
       <td className="px-3 py-2">{d.event_count ?? 0}</td>

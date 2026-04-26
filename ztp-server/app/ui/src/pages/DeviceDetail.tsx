@@ -61,14 +61,21 @@ export default function DeviceDetail() {
       )}
 
       <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={apply}
-          disabled={busy || !device?.container}
-          className="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-sm"
-          title="Push the served per-host config into running + startup via Cli configure replace. No reboot."
-        >
-          {busy ? "Applying…" : "Apply config (live)"}
-        </button>
+        {(() => {
+          const isCisco = device?.vendor === "cisco";
+          return (
+            <button
+              onClick={apply}
+              disabled={busy || !device?.container || isCisco}
+              className="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-sm"
+              title={isCisco
+                ? "Apply config (live) is Arista-only. Stop+Start the device to re-run ZTP and pick up config changes."
+                : "Push the served per-host config into running + startup via FastCli configure replace. No reboot."}
+            >
+              {busy ? "Applying…" : isCisco ? "Apply config (live) — Arista only" : "Apply config (live)"}
+            </button>
+          );
+        })()}
         <Link to={`/edit/${host}`} className="px-3 py-2 rounded border border-slate-700 hover:bg-slate-800 text-sm">
           Edit config
         </Link>

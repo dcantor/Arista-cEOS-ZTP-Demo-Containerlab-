@@ -7,9 +7,20 @@ import docker
 
 CLAB_LABEL = "clab-node-name"
 LAB_NAME = "ztp-universal-demo"
-# Short names of the vEOS nodes in the topology. Used to find/enumerate
-# them since the containers are kind:linux and don't self-identify as EOS.
-VEOS_NODES = ("spine1", "spine2", "leaf1", "leaf2")
+# Per-vendor static map of topology node -> vendor. Enumerated explicitly
+# (rather than parsed from topology.clab.yml at runtime) because the file
+# isn't bind-mounted into the app container.
+TOPOLOGY_VENDORS = {
+    "spine1": "arista",
+    "spine2": "arista",
+    "leaf1":  "arista",
+    "leaf2":  "arista",
+    "leaf101": "cisco",
+}
+# Short names of the *topology* nodes (any vendor). Used to enumerate
+# devices since the wrapper containers are kind:linux and don't
+# self-identify as a network OS.
+VEOS_NODES = tuple(TOPOLOGY_VENDORS.keys())
 
 
 def _client():
@@ -34,6 +45,7 @@ def list_ceos_nodes() -> list[dict]:
             "name": node,
             "container": c.name,
             "status": c.status,
+            "vendor": TOPOLOGY_VENDORS.get(node, "arista"),
             # The Docker-assigned MAC on the wrapper is meaningless for the
             # VM; the VM synthesizes its own MAC deterministically from the
             # node name. Report the wrapper's MAC for transparency.
@@ -107,7 +119,15 @@ def apply_config(node_name: str, server_url: str = "http://172.30.0.20") -> dict
     server is currently serving, then save it to startup-config. Uses
     eAPI (HTTP JSON-RPC) over the device's post-ZTP management IP. No
     VM reboot, no container restart.
+
+    Arista-only: Cisco IOS-XE has no eAPI. To regenerate a Cisco device's
+    config you currently need to Stop+Start it (which re-runs ZTP).
     """
+    if TOPOLOGY_VENDORS.get(node_name, "arista") != "arista":
+        raise ValueError(
+            f"apply-config (live) is Arista-only; {node_name} is "
+            f"{TOPOLOGY_VENDORS.get(node_name)}. Stop+Start to re-run ZTP."
+        )
     # Resolve mgmt IP: topology nodes have static post-ZTP IPs; managed
     # devices come from the SQLite table (added via the UI).
     topology_ip_by_node = {

@@ -28,8 +28,15 @@ import leases
 CONTENT_ROOT = Path(os.environ.get("ZTP_CONTENT_ROOT", "/ztp-content"))
 STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", "/app/static"))
 EOS_IMAGES_ROOT = Path(os.environ.get("EOS_IMAGES_ROOT", "/eos_images"))
+IOSXE_IMAGES_ROOT = Path(os.environ.get("IOSXE_IMAGES_ROOT", "/iosxe-images"))
 HOST_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-EOS_IMAGE_RE = re.compile(r"^[A-Za-z0-9._-]+\.swi$")
+# Either an Arista .swi or a Cisco .qcow2 / .bin / .iso image filename.
+EOS_IMAGE_RE = re.compile(r"^[A-Za-z0-9._-]+\.(swi|qcow2|bin|iso|tar)$")
+# Per-vendor image directories.
+_IMAGE_DIR_BY_VENDOR = {
+    "arista": EOS_IMAGES_ROOT,
+    "cisco":  IOSXE_IMAGES_ROOT,
+}
 # Strip ANSI escape sequences (CSI ... final byte) from terminal output so the
 # log stream renders cleanly as plain text in the browser.
 ANSI_RE = re.compile(rb"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -84,13 +91,14 @@ app = FastAPI(
 
 # ---------- ZTP-facing endpoints (consumed by cEOS) ----------
 
-_ZTP_FILE_RE = re.compile(r"^[a-zA-Z0-9_-]+\.sh$")
+_ZTP_FILE_RE = re.compile(r"^[a-zA-Z0-9_-]+\.(sh|py)$")
 
 
 @app.get("/ztp/{filename}", response_class=PlainTextResponse, tags=["ztp"])
 def ztp_script(filename: str):
     """Serve any per-host ZTP script under ztp-content/ztp/. dnsmasq
-    hands the cEOS/vEOS the URL of <hostname>.sh via DHCP option 67.
+    hands the device the URL of <hostname>.sh (bash, Arista) or
+    <hostname>.py (Python, Cisco IOS-XE guest shell) via DHCP option 67.
     """
     if not _ZTP_FILE_RE.match(filename):
         raise HTTPException(400, "filename must be <name>.sh")
@@ -483,15 +491,46 @@ async def api_device_apply_config(host: str):
 
 # ---------- EOS images / per-device target ----------
 
-def _list_eos_images() -> list[dict]:
-    if not EOS_IMAGES_ROOT.exists():
+def _list_images_for_vendor(vendor: str) -> list[dict]:
+    """List image files for one vendor (Arista .swi or Cisco .qcow2/.bin/.iso).
+    Each entry carries its vendor so the UI can filter the dropdown.
+    """
+    root = _IMAGE_DIR_BY_VENDOR.get(vendor)
+    if root is None or not root.exists():
         return []
     out = []
-    for p in sorted(EOS_IMAGES_ROOT.iterdir()):
-        if p.is_file() and p.suffix == ".swi":
+    for p in sorted(root.iterdir()):
+        if p.is_file() and EOS_IMAGE_RE.match(p.name):
             st = p.stat()
-            out.append({"filename": p.name, "size": st.st_size, "mtime": st.st_mtime})
+            out.append({
+                "filename": p.name,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+                "vendor": vendor,
+            })
     return out
+
+
+def _list_eos_images() -> list[dict]:
+    """Aggregate images across every vendor — backward-compatible name
+    (still called eos-images on the API). The UI keys off the per-row
+    vendor field to filter the dropdown.
+    """
+    out = []
+    for vendor in _IMAGE_DIR_BY_VENDOR:
+        out.extend(_list_images_for_vendor(vendor))
+    return out
+
+
+def _resolve_image_path(filename: str) -> Path | None:
+    """Locate `filename` under any vendor's image dir."""
+    for root in _IMAGE_DIR_BY_VENDOR.values():
+        if not root.exists():
+            continue
+        p = root / filename
+        if p.exists():
+            return p
+    return None
 
 
 @app.get("/api/eos-images", tags=["eos-images"])
@@ -501,11 +540,11 @@ def api_eos_images():
 
 @app.get("/eos-images/{filename}", tags=["eos-images"])
 def serve_eos_image(filename: str):
-    """Serve a .swi image to a device during ZTP."""
+    """Serve an EOS .swi or IOS-XE .qcow2/.bin/.iso to a device during ZTP."""
     if not EOS_IMAGE_RE.match(filename):
         raise HTTPException(400, "bad filename")
-    p = EOS_IMAGES_ROOT / filename
-    if not p.exists():
+    p = _resolve_image_path(filename)
+    if p is None:
         raise HTTPException(404, "no such image")
     return FileResponse(p, media_type="application/octet-stream", filename=filename)
 
@@ -543,8 +582,8 @@ async def api_device_eos_image_set(host: str, body: DeviceEosImageUpdate):
     img = (body.eos_image or "").strip() or None
     if img is not None:
         if not EOS_IMAGE_RE.match(img):
-            raise HTTPException(400, "eos_image must be a .swi filename")
-        if not (EOS_IMAGES_ROOT / img).exists():
+            raise HTTPException(400, "eos_image must be a recognized image filename")
+        if _resolve_image_path(img) is None:
             raise HTTPException(404, f"no such image on server: {img}")
     db.set_device_eos_image(host, img)
     await _broadcast({"type": "eos_image_changed", "host": host, "eos_image": img})
