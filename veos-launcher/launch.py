@@ -268,6 +268,35 @@ def main():
         print(f"[{NODE_NAME}] VM_AUTOSTART=false; waiting for "
               f"POST /api/devices/{NODE_NAME}/start", flush=True)
 
+    # Persistent VM-console capture. Maintains ONE long-lived TCP
+    # connection to QEMU's telnet:5000 (server,nowait — single client at
+    # a time) and appends bytes to /tmp/qemu-console.log. The ZTP app's
+    # SSE console endpoint just tails the file, so any number of
+    # browsers can watch without poking QEMU's chardev (which gets stuck
+    # if multiple direct clients churn).
+    def _console_capture():
+        log_path = Path("/tmp/qemu-console.log")
+        log_path.touch()
+        import socket as _socket
+        while True:
+            try:
+                s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+                s.settimeout(3)
+                s.connect(("127.0.0.1", 5000))
+                s.settimeout(None)
+                with log_path.open("ab", buffering=0) as f:
+                    while True:
+                        d = s.recv(4096)
+                        if not d:
+                            break
+                        f.write(d)
+                s.close()
+            except Exception:
+                pass
+            time.sleep(2)
+    import threading as _t
+    _t.Thread(target=_console_capture, daemon=True).start()
+
     # Stay alive as PID 1 (under tini) so the container keeps running.
     # tini reaps any orphaned QEMU children; we just sleep until SIGTERM.
     def _sigterm(sig, frame):

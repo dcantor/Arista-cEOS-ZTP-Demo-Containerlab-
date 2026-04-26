@@ -2,16 +2,31 @@ import { useEffect, useRef, useState } from "react";
 
 const MAX_LINES = 5000;
 
-export default function LogDrawer({ host, onClose }: { host: string; onClose: () => void }) {
+export default function LogDrawer({
+  host,
+  onClose,
+  source = "logs",
+}: {
+  host: string;
+  onClose: () => void;
+  /** "logs" = wrapper docker logs (launcher output);
+   *  "console" = VM serial console via QEMU telnet:5000 */
+  source?: "logs" | "console";
+}) {
   const [lines, setLines] = useState<string[]>([]);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  const streamUrl = source === "console"
+    ? `/api/devices/${host}/console/stream`
+    : `/api/devices/${host}/logs/stream`;
+  const title = source === "console" ? "VM Console" : "Live ZTP Viewer";
+
   useEffect(() => {
     setLines([]);
     setConnected(false);
-    const es = new EventSource(`/api/devices/${host}/logs/stream`);
+    const es = new EventSource(streamUrl);
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
     es.onmessage = (ev) => {
@@ -22,7 +37,7 @@ export default function LogDrawer({ host, onClose }: { host: string; onClose: ()
       });
     };
     return () => { es.close(); };
-  }, [host]);
+  }, [streamUrl]);
 
   useEffect(() => {
     if (!paused && bodyRef.current) {
@@ -34,7 +49,7 @@ export default function LogDrawer({ host, onClose }: { host: string; onClose: ()
     <div className="fixed inset-x-0 bottom-0 h-[45vh] bg-slate-950 border-t border-slate-800 z-50 flex flex-col shadow-2xl">
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold mono">Live ZTP Viewer · {host}</span>
+          <span className="text-sm font-semibold mono">{title} · {host}</span>
           <span className={`text-[10px] mono ${connected ? "text-emerald-400" : "text-slate-500"}`}>
             {connected ? "● streaming" : "○ disconnected"}
           </span>

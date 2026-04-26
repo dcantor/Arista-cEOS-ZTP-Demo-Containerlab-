@@ -9,7 +9,7 @@ export default function Devices() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [images, setImages] = useState<EosImage[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [viewerHost, setViewerHost] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<{ host: string; kind: "logs" | "console" } | null>(null);
 
   const refresh = () => {
     api.devices().then(setDevices).catch((e) => setError(String(e)));
@@ -48,7 +48,7 @@ export default function Devices() {
           <tbody>
             {devices.map((d) => (
               <DeviceRow key={d.name} d={d} images={images}
-                onView={setViewerHost} onChange={refresh} />
+                onView={(host, kind) => setViewer({ host, kind })} onChange={refresh} />
             ))}
             {devices.length === 0 && (
               <tr><td colSpan={12} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
@@ -59,10 +59,14 @@ export default function Devices() {
 
       <AddDeviceForm onAdded={refresh} />
 
-      {viewerHost && (
+      {viewer && (
         <>
           <div className="h-[45vh]" aria-hidden />
-          <LogDrawer host={viewerHost} onClose={() => setViewerHost(null)} />
+          <LogDrawer
+            host={viewer.host}
+            source={viewer.kind}
+            onClose={() => setViewer(null)}
+          />
         </>
       )}
     </section>
@@ -71,7 +75,8 @@ export default function Devices() {
 
 function DeviceRow({ d, images, onView, onChange }: {
   d: Device; images: EosImage[];
-  onView: (h: string) => void; onChange: () => void;
+  onView: (host: string, kind: "logs" | "console") => void;
+  onChange: () => void;
 }) {
   const isManaged = d.source === "managed";
   const [editing, setEditing] = useState(false);
@@ -222,11 +227,20 @@ function DeviceRow({ d, images, onView, onChange }: {
           )}
           {d.container && !editing && (
             <button
-              onClick={() => onView(d.name)}
+              onClick={() => onView(d.name, "logs")}
               className="px-2 py-1 rounded text-xs bg-sky-600 hover:bg-sky-500"
-              title="Stream live docker logs for this device"
+              title="Stream the wrapper container's docker logs (launcher output)"
             >
               Live ZTP Viewer
+            </button>
+          )}
+          {d.container && !editing && vmStatus === "running" && (
+            <button
+              onClick={() => onView(d.name, "console")}
+              className="px-2 py-1 rounded text-xs bg-violet-600 hover:bg-violet-500"
+              title="Stream the VM's serial console (BIOS/GRUB/OS boot, ZTP/POAP, EOS/IOS prompts). Requires the VM to be running."
+            >
+              VM Console
             </button>
           )}
           {isManaged && !editing && (

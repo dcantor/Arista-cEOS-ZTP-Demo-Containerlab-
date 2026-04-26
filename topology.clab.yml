@@ -22,6 +22,7 @@ topology:
       binds:
         - ztp-server/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro
         - dhcp-state:/dhcp-state
+        - ztp-content/ztp:/tftp-root:ro   # for NX-OS POAP via TFTP
       cap-add:
         - NET_ADMIN
         - NET_RAW

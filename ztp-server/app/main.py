@@ -1,4 +1,5 @@
 import asyncio
+import docker
 import io
 import json
 import os
@@ -399,6 +400,125 @@ def api_device_status(host: str):
     if not HOST_RE.match(host):
         raise HTTPException(400, "invalid host")
     return {"host": host, "vm_status": docker_ctl.vm_status(host)}
+
+
+def _strip_telnet_iac(buf: bytes) -> bytes:
+    """Strip RFC 854 telnet IAC sequences (negotiation, subneg). Returns
+    a clean byte string + a leftover tail (an incomplete sequence at the
+    end of buf that we should re-prepend on the next read).
+    """
+    out = bytearray()
+    i = 0
+    while i < len(buf):
+        b = buf[i]
+        if b != 0xff:
+            out.append(b)
+            i += 1
+            continue
+        # IAC; need at least one more byte
+        if i + 1 >= len(buf):
+            break  # tail
+        cmd = buf[i + 1]
+        if cmd == 0xff:
+            out.append(0xff)
+            i += 2
+        elif cmd in (0xfb, 0xfc, 0xfd, 0xfe):  # WILL/WONT/DO/DONT + opt
+            if i + 2 >= len(buf):
+                break  # tail
+            i += 3
+        elif cmd == 0xfa:  # subneg, skip to IAC SE (FF F0)
+            end = buf.find(b"\xff\xf0", i + 2)
+            if end == -1:
+                break  # tail
+            i = end + 2
+        else:
+            i += 2  # other 2-byte command
+    tail = bytes(buf[i:])
+    return bytes(out), tail
+
+
+@app.get("/api/devices/{host}/console/stream", tags=["devices"])
+async def api_device_console_stream(host: str, request: Request):
+    """SSE: stream the VM's serial console.
+
+    QEMU's `-serial telnet:0.0.0.0:5000,server,nowait` chardev gets into
+    a stuck "no listener" state after a few client connect/disconnects.
+    Instead of opening our own TCP socket to the wrapper, we run
+    `docker exec wrapper telnet localhost 5000` inside the wrapper —
+    same path that `make console-<node>` uses, which is reliable. The
+    docker SDK gives us a generator over the exec's stdout.
+    """
+    if not HOST_RE.match(host):
+        raise HTTPException(400, "invalid host")
+    node = next((n for n in docker_ctl.list_ceos_nodes() if n["name"] == host), None)
+    if node is None:
+        raise HTTPException(404, "no such device")
+
+    cli = docker.from_env()
+    try:
+        c = cli.containers.get(node["container"])
+    except docker.errors.NotFound:
+        raise HTTPException(404, "wrapper container not found")
+
+    # `tail -F` the launcher's persistent console capture. The launcher
+    # holds the single TCP connection to QEMU's telnet (which only
+    # accepts one client at a time) and appends to this file; we follow
+    # it here. Multiple browsers can watch concurrently.
+    exec_id = cli.api.exec_create(
+        c.id,
+        ["sh", "-c", "tail -n +1 -F /tmp/qemu-console.log 2>/dev/null"],
+        stdout=True, stderr=True, tty=False,
+    )["Id"]
+    log_stream = cli.api.exec_start(exec_id, stream=True, demux=False)
+
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=4096)
+
+    def reader():
+        buf = b""
+        line_buf = b""
+        try:
+            for chunk in log_stream:
+                if not chunk:
+                    continue
+                buf += chunk
+                cleaned, buf = _strip_telnet_iac(buf)
+                line_buf += cleaned
+                while b"\n" in line_buf:
+                    line, _, line_buf = line_buf.partition(b"\n")
+                    text = ANSI_RE.sub(b"", line).decode("utf-8", errors="replace").rstrip("\r")
+                    if not queue.full():
+                        loop.call_soon_threadsafe(queue.put_nowait, text)
+        except Exception:
+            pass
+        finally:
+            try: loop.call_soon_threadsafe(queue.put_nowait, None)
+            except Exception: pass
+
+    threading.Thread(target=reader, daemon=True).start()
+
+    async def gen():
+        try:
+            yield "retry: 2000\n\n"
+            while True:
+                if await request.is_disconnected():
+                    return
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if item is None:
+                    return
+                yield f"data: {item}\n\n"
+        finally:
+            # Kill the in-container `tail -F` so the exec stream ends.
+            try:
+                c.exec_run(["pkill", "-f", "tail -n +1 -F /tmp/qemu-console.log"])
+            except Exception:
+                pass
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.get("/api/devices/{host}/logs/stream", tags=["devices"])
