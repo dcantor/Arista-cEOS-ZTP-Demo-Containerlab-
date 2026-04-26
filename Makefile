@@ -7,7 +7,7 @@ APP_URL := http://localhost:8080
         deploy deploy-with-vms destroy redeploy \
         start-vms stop-vms \
         ps dhcp-logs app-logs ztp-events ui-dev \
-        console-spine1 console-spine2 console-leaf1 console-leaf2
+        console-spine1 console-spine2 console-leaf1 console-leaf2 console-leaf101
 
 help:
 	@echo "Targets:"
@@ -98,7 +98,8 @@ define console_target
 	@sudo docker exec -it clab-$(LAB)-$(1) telnet localhost 5000
 endef
 
-console-spine1: ; $(call console_target,spine1)
-console-spine2: ; $(call console_target,spine2)
-console-leaf1:  ; $(call console_target,leaf1)
-console-leaf2:  ; $(call console_target,leaf2)
+console-spine1:  ; $(call console_target,spine1)
+console-spine2:  ; $(call console_target,spine2)
+console-leaf1:   ; $(call console_target,leaf1)
+console-leaf2:   ; $(call console_target,leaf2)
+console-leaf101: ; $(call console_target,leaf101)
