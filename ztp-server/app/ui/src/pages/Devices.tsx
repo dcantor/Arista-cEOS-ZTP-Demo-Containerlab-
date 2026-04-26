@@ -3,7 +3,12 @@ import { Link } from "react-router-dom";
 import { api, Device, EosImage } from "../api";
 import { useSSE } from "../hooks/useSSE";
 import StatusPill from "../components/StatusPill";
-import LogDrawer, { View, ViewKind } from "../components/LogDrawer";
+import LogDrawer, { View } from "../components/LogDrawer";
+
+// All Action-column buttons share the same min width so the column is
+// visually aligned across rows even when only a subset of buttons is
+// shown for a given row.
+const BTN = "w-24 px-2 py-1 rounded text-xs text-center";
 
 export default function Devices() {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -12,15 +17,15 @@ export default function Devices() {
   const [views, setViews] = useState<View[]>([]);
   const [activeIdx, setActiveIdx] = useState<number>(0);
 
-  const openView = (host: string, kind: ViewKind) => {
+  const openConsole = (host: string) => {
     setViews((vs) => {
-      const i = vs.findIndex((v) => v.host === host && v.kind === kind);
+      const i = vs.findIndex((v) => v.host === host);
       if (i >= 0) {
         setActiveIdx(i);
         return vs;
       }
       setActiveIdx(vs.length);
-      return [...vs, { host, kind }];
+      return [...vs, { host }];
     });
   };
   const closeView = (idx: number) => {
@@ -77,7 +82,7 @@ export default function Devices() {
           <tbody>
             {devices.map((d) => (
               <DeviceRow key={d.name} d={d} images={images}
-                onView={openView} onChange={refresh} />
+                onView={openConsole} onChange={refresh} />
             ))}
             {devices.length === 0 && (
               <tr><td colSpan={12} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
@@ -107,7 +112,7 @@ export default function Devices() {
 
 function DeviceRow({ d, images, onView, onChange }: {
   d: Device; images: EosImage[];
-  onView: (host: string, kind: ViewKind) => void;
+  onView: (host: string) => void;
   onChange: () => void;
 }) {
   const isManaged = d.source === "managed";
@@ -241,8 +246,8 @@ function DeviceRow({ d, images, onView, onChange }: {
             <button
               onClick={startVm}
               disabled={busy}
-              className="px-2 py-1 rounded text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
-              title="Start the vEOS VM in this wrapper"
+              className={`${BTN} bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50`}
+              title="Start the VM in this wrapper"
             >
               {busy ? "…" : "Start"}
             </button>
@@ -251,26 +256,22 @@ function DeviceRow({ d, images, onView, onChange }: {
             <button
               onClick={stopVm}
               disabled={busy}
-              className="px-2 py-1 rounded text-xs bg-amber-600 hover:bg-amber-500 disabled:opacity-50"
-              title="Stop the vEOS VM (graceful, then SIGKILL after 15 s)"
+              className={`${BTN} bg-amber-600 hover:bg-amber-500 disabled:opacity-50`}
+              title="Stop the VM (graceful, then SIGKILL after 15 s)"
             >
               {busy ? "…" : "Stop"}
             </button>
           )}
           {d.container && !editing && (
             <button
-              onClick={() => onView(d.name, "logs")}
-              className="px-2 py-1 rounded text-xs bg-sky-600 hover:bg-sky-500"
-              title="Stream the wrapper container's docker logs (launcher output)"
-            >
-              Live ZTP Viewer
-            </button>
-          )}
-          {d.container && !editing && vmStatus === "running" && (
-            <button
-              onClick={() => onView(d.name, "console")}
-              className="px-2 py-1 rounded text-xs bg-violet-600 hover:bg-violet-500"
-              title="Stream the VM's serial console (BIOS/GRUB/OS boot, ZTP/POAP, EOS/IOS prompts). Requires the VM to be running."
+              onClick={() => onView(d.name)}
+              disabled={vmStatus !== "running"}
+              className={`${BTN} bg-violet-600 hover:bg-violet-500 disabled:opacity-40`}
+              title={
+                vmStatus === "running"
+                  ? "Stream the VM's serial console (BIOS/GRUB/OS boot, ZTP/POAP, EOS/IOS prompts)."
+                  : "Start the VM first to access its serial console."
+              }
             >
               VM Console
             </button>
@@ -279,14 +280,14 @@ function DeviceRow({ d, images, onView, onChange }: {
             <>
               <button
                 onClick={startEdit}
-                className="px-2 py-1 rounded text-xs bg-sky-600 hover:bg-sky-500"
+                className={`${BTN} bg-sky-600 hover:bg-sky-500`}
                 title="Edit MAC and mgmt IP for this device"
               >
                 Edit
               </button>
               <button
                 onClick={remove}
-                className="px-2 py-1 rounded text-xs bg-rose-600 hover:bg-rose-500"
+                className={`${BTN} bg-rose-600 hover:bg-rose-500`}
                 title="Remove this device from dnsmasq"
               >
                 Delete
@@ -298,14 +299,14 @@ function DeviceRow({ d, images, onView, onChange }: {
               <button
                 onClick={saveEdit}
                 disabled={busy}
-                className="px-2 py-1 rounded text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
+                className={`${BTN} bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50`}
               >
                 {busy ? "Saving…" : "Save"}
               </button>
               <button
                 onClick={cancelEdit}
                 disabled={busy}
-                className="px-2 py-1 rounded text-xs border border-slate-700 hover:bg-slate-800"
+                className={`${BTN} border border-slate-700 hover:bg-slate-800`}
               >
                 Cancel
               </button>

@@ -2,18 +2,14 @@ import { MouseEvent, useEffect, useRef, useState } from "react";
 
 const MAX_LINES = 5000;
 
-export type ViewKind = "logs" | "console";
-export type View = { host: string; kind: ViewKind };
+export type View = { host: string };
 
-const viewKey = (v: View) => `${v.kind}:${v.host}`;
-const kindLabel = (k: ViewKind) => (k === "console" ? "VM" : "LOGS");
-const kindColor = (k: ViewKind) =>
-  k === "console" ? "text-violet-300" : "text-sky-300";
+const viewKey = (v: View) => v.host;
 
 /**
- * Bottom drawer with one tab per open device view. Sessions stay
- * mounted even when not visible, so the EventSource keeps streaming and
- * switching tabs preserves scroll + history.
+ * Bottom drawer with one tab per open device VM-console view. Sessions
+ * stay mounted even when not visible, so the EventSource keeps
+ * streaming and switching tabs preserves scroll + history.
  */
 export default function LogDrawer({
   views,
@@ -83,9 +79,7 @@ function Tab({
       }`}
     >
       <span className="mono">{view.host}</span>
-      <span className={`text-[10px] mono ${kindColor(view.kind)}`}>
-        {kindLabel(view.kind)}
-      </span>
+      <span className="text-[10px] mono text-violet-300">VM</span>
       <button
         onClick={onClose}
         className="ml-1 text-slate-500 hover:text-rose-300"
@@ -103,10 +97,7 @@ function Session({ view, visible }: { view: View; visible: boolean }) {
   const [connected, setConnected] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  const streamUrl =
-    view.kind === "console"
-      ? `/api/devices/${view.host}/console/stream`
-      : `/api/devices/${view.host}/logs/stream`;
+  const streamUrl = `/api/devices/${view.host}/console/stream`;
 
   useEffect(() => {
     setLines([]);
@@ -138,9 +129,7 @@ function Session({ view, visible }: { view: View; visible: boolean }) {
       className={`absolute inset-0 flex flex-col ${visible ? "" : "hidden"}`}
     >
       <div className="flex items-center gap-3 px-3 py-1 border-b border-slate-800 bg-slate-900/60">
-        <span className="text-xs mono">
-          {view.host} · {kindLabel(view.kind)}
-        </span>
+        <span className="text-xs mono">{view.host} · VM Console</span>
         <span
           className={`text-[10px] mono ${
             connected ? "text-emerald-400" : "text-slate-500"

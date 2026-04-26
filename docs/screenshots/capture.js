@@ -21,7 +21,7 @@ const SHOTS = [
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
   const page = await browser.newPage();
-  await page.setViewport({ width: 1400, height: 900, deviceScaleFactor: 1 });
+  await page.setViewport({ width: 1700, height: 900, deviceScaleFactor: 1 });
 
   for (const s of SHOTS) {
     const url = BASE + s.url;
