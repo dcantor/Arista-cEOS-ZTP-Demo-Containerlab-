@@ -88,13 +88,20 @@ ztp-events:
 ui-dev:
 	cd ztp-server/app/ui && npm install && npm run dev
 
-# vEOS has no docker exec Cli; console is the qemu serial on TCP:5000
-# inside the wrapper's netns. The wrapper container's eth0 has no IP
-# (the launcher strips it so vEOS Management1 can own the L3 address),
-# so we reach the console by telnetting from inside the container itself.
-# Use ctrl-] then 'quit' to exit telnet.
+# Console = QEMU's serial on TCP:5000 inside the wrapper's netns. The
+# wrapper container's eth0 has no IP (the launcher strips it so the VM's
+# mgmt interface can own the L3 address), so we reach the console by
+# telnetting from inside the container itself. Use ctrl-] then 'quit' to
+# exit. The console only listens while the VM is running — start it via
+# the UI or `curl -X POST .../api/devices/<n>/start` first.
+# Cred hints: arista nodes login admin/admin; leaf101 (cisco) login admin/cisco.
 define console_target
-	@echo "Console for $(1) (ctrl-] then 'quit' to exit, login admin/admin)"
+	@if ! sudo docker exec clab-$(LAB)-$(1) /usr/local/bin/vm-status.sh 2>/dev/null | grep -q running; then \
+	  echo "VM '$(1)' is not running. Start it first:"; \
+	  echo "  curl -X POST $(APP_URL)/api/devices/$(1)/start"; \
+	  exit 1; \
+	fi
+	@echo "Console for $(1) (ctrl-] then 'quit' to exit)"
 	@sudo docker exec -it clab-$(LAB)-$(1) telnet localhost 5000
 endef
 
