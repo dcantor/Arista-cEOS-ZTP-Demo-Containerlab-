@@ -4,6 +4,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qy \
  && apt-get install -y --no-install-recommends \
       qemu-kvm qemu-utils \
+      ovmf \
       bridge-utils iproute2 iputils-ping \
       python3 python3-yaml \
       socat telnet ca-certificates \
@@ -15,12 +16,16 @@ RUN apt-get update -qy \
 
 COPY launch.py /launch.py
 COPY healthcheck.sh /healthcheck.sh
-RUN chmod +x /launch.py /healthcheck.sh
+COPY vm-start.sh vm-stop.sh vm-status.sh /usr/local/bin/
+RUN chmod +x /launch.py /healthcheck.sh /usr/local/bin/vm-*.sh
 
 # vEOS console
 EXPOSE 5000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=20 \
+# Healthy = launcher finished bridge setup (qemu-cmd.sh exists). Whether
+# the VM itself is currently running is independent and exposed via the
+# /api/devices/<host>/status endpoint, not as Docker health.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=10 \
   CMD ["/healthcheck.sh"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/launch.py"]

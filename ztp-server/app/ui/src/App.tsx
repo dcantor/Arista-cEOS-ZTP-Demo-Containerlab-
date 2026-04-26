@@ -26,7 +26,7 @@ export default function App() {
   return (
     <div className="min-h-full flex flex-col">
       <header className="border-b border-slate-800 bg-slate-900">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <Link to="/" className="text-lg font-semibold tracking-tight">
             ZTP Server
           </Link>
@@ -48,7 +48,7 @@ export default function App() {
           </nav>
         </div>
       </header>
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
+      <main className="flex-1 max-w-screen-2xl w-full mx-auto px-4 py-6">
         <Routes>
           <Route path="/" element={<Devices />} />
           <Route path="/devices/:host" element={<DeviceDetail />} />

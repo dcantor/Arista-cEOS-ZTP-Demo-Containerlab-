@@ -5,7 +5,9 @@ export type Device = {
   mac: string | null;
   ip: string | null;
   source?: "topology" | "managed" | "absent";
+  vendor?: "arista" | "cisco" | "nexus";
   eos_image?: string | null;
+  vm_status?: "running" | "stopped" | "unknown";
   first_seen?: string;
   last_seen?: string;
   last_event?: string;
@@ -16,6 +18,7 @@ export type EosImage = {
   filename: string;
   size: number;
   mtime: number;
+  vendor?: "arista" | "cisco" | "nexus";
 };
 
 export type ManagedDevice = {
@@ -105,5 +108,13 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ eos_image }),
       },
+    ),
+  startVm: (host: string) =>
+    j<{ node: string; vm_status: string; output: string }>(
+      `/api/devices/${host}/start`, { method: "POST" },
+    ),
+  stopVm: (host: string) =>
+    j<{ node: string; vm_status: string; output: string }>(
+      `/api/devices/${host}/stop`, { method: "POST" },
     ),
 };

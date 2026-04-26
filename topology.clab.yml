@@ -22,6 +22,7 @@ topology:
       binds:
         - ztp-server/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro
         - dhcp-state:/dhcp-state
+        - ztp-content/ztp:/tftp-root:ro   # for NX-OS POAP via TFTP
       cap-add:
         - NET_ADMIN
         - NET_RAW
@@ -36,7 +37,9 @@ topology:
         - ztp-content:/ztp-content
         - dhcp-state:/dhcp-state          # rw: app writes managed.conf for dnsmasq to include
         - data:/data
-        - eos_images:/eos_images:ro       # served via /eos-images/{name} during ZTP
+        - eos_images:/eos_images:ro       # Arista .swi files (served via /eos-images/<name>)
+        - iosxe-images:/iosxe-images:ro   # Cisco IOS-XE .qcow2 files (same endpoint, same vendor-tagged listing)
+        - nxos-images:/nxos-images:ro     # Cisco NX-OS .qcow2 / .bin files
         - /var/run/docker.sock:/var/run/docker.sock
 
     # ---- vEOS nodes ----
@@ -101,6 +104,52 @@ topology:
       cap-add: [NET_ADMIN, NET_RAW, SYS_NICE]
       binds:
         - vEOS-lab-4.36.0F.qcow2:/vEOS.qcow2:ro
+        - data/veos-overlay:/overlay
+      stages:
+        create:
+          wait-for:
+            - {node: ztp-dhcp, stage: create}
+            - {node: ztp-http, stage: create}
+
+    # Cisco IOS-XE node (CSR1000v). Standalone — only mgmt interface,
+    # no fabric links. The launcher reads VENDOR=cisco and switches to
+    # the Cisco QEMU profile (4 GB RAM, IDE disk).
+    leaf101:
+      kind: linux
+      image: veos-launcher:latest
+      env:
+        NODE_NAME: leaf101
+        VENDOR: cisco
+      devices: [/dev/kvm, /dev/net/tun]
+      cap-add: [NET_ADMIN, NET_RAW, SYS_NICE]
+      binds:
+        - iosxe-images/csr1000v-universalk9.17.03.04a-serial.qcow2:/vm-image.qcow2:ro
+        - data/veos-overlay:/overlay
+      stages:
+        create:
+          wait-for:
+            - {node: ztp-dhcp, stage: create}
+            - {node: ztp-http, stage: create}
+
+    # Cisco NX-OS node (Nexus 9300v lite). Standalone — only mgmt
+    # interface. The launcher reads VENDOR=nexus and uses the NX-OS QEMU
+    # profile (4 GB RAM, virtio disk). POAP fetches a Python script via
+    # DHCP option 67 on first boot.
+    leaf201:
+      kind: linux
+      image: veos-launcher:latest
+      env:
+        NODE_NAME: leaf201
+        VENDOR: nexus
+      devices: [/dev/kvm, /dev/net/tun]
+      cap-add: [NET_ADMIN, NET_RAW, SYS_NICE]
+      ports:
+        # VNC (5900 inside the wrapper) -> host:5901 so we can SEE what
+        # the NX-OS bootloader is doing — its early boot prints go to
+        # VGA, not serial. From the lab host: vncviewer localhost:5901
+        - "5901:5900"
+      binds:
+        - nxos-images/nexus9300v64-lite.10.5.5.M.qcow2:/vm-image.qcow2:ro
         - data/veos-overlay:/overlay
       stages:
         create:

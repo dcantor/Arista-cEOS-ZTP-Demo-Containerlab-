@@ -1,4 +1,5 @@
 import asyncio
+import docker
 import io
 import json
 import os
@@ -27,9 +28,18 @@ import leases
 
 CONTENT_ROOT = Path(os.environ.get("ZTP_CONTENT_ROOT", "/ztp-content"))
 STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", "/app/static"))
-EOS_IMAGES_ROOT = Path(os.environ.get("EOS_IMAGES_ROOT", "/eos_images"))
+EOS_IMAGES_ROOT   = Path(os.environ.get("EOS_IMAGES_ROOT",   "/eos_images"))
+IOSXE_IMAGES_ROOT = Path(os.environ.get("IOSXE_IMAGES_ROOT", "/iosxe-images"))
+NXOS_IMAGES_ROOT  = Path(os.environ.get("NXOS_IMAGES_ROOT",  "/nxos-images"))
 HOST_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-EOS_IMAGE_RE = re.compile(r"^[A-Za-z0-9._-]+\.swi$")
+# Either an Arista .swi or a Cisco .qcow2 / .bin / .iso image filename.
+EOS_IMAGE_RE = re.compile(r"^[A-Za-z0-9._-]+\.(swi|qcow2|bin|iso|tar)$")
+# Per-vendor image directories.
+_IMAGE_DIR_BY_VENDOR = {
+    "arista": EOS_IMAGES_ROOT,
+    "cisco":  IOSXE_IMAGES_ROOT,
+    "nexus":  NXOS_IMAGES_ROOT,
+}
 # Strip ANSI escape sequences (CSI ... final byte) from terminal output so the
 # log stream renders cleanly as plain text in the browser.
 ANSI_RE = re.compile(rb"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -84,13 +94,14 @@ app = FastAPI(
 
 # ---------- ZTP-facing endpoints (consumed by cEOS) ----------
 
-_ZTP_FILE_RE = re.compile(r"^[a-zA-Z0-9_-]+\.sh$")
+_ZTP_FILE_RE = re.compile(r"^[a-zA-Z0-9_-]+\.(sh|py)$")
 
 
 @app.get("/ztp/{filename}", response_class=PlainTextResponse, tags=["ztp"])
 def ztp_script(filename: str):
     """Serve any per-host ZTP script under ztp-content/ztp/. dnsmasq
-    hands the cEOS/vEOS the URL of <hostname>.sh via DHCP option 67.
+    hands the device the URL of <hostname>.sh (bash, Arista) or
+    <hostname>.py (Python, Cisco IOS-XE guest shell) via DHCP option 67.
     """
     if not _ZTP_FILE_RE.match(filename):
         raise HTTPException(400, "filename must be <name>.sh")
@@ -130,6 +141,7 @@ def api_devices():
     summaries = {s["host"]: s for s in db.host_summaries()}
     eos_choice = db.list_device_settings()  # {name: image-or-None}
     nodes = docker_ctl.list_ceos_nodes()
+    vm_statuses = docker_ctl.vm_status_all()
     out = []
     seen_names: set[str] = set()
     for n in nodes:
@@ -137,6 +149,7 @@ def api_devices():
         out.append({
             **n, "source": "topology",
             "eos_image": eos_choice.get(n["name"]),
+            "vm_status": vm_statuses.get(n["name"], "unknown"),
             **s,
         })
         seen_names.add(n["name"])
@@ -352,52 +365,135 @@ async def api_config_put(host: str, body: ConfigUpdate):
     return {"ok": True, "size": p.stat().st_size}
 
 
-@app.get("/api/devices/{host}/logs/stream", tags=["devices"])
-async def api_device_logs_stream(host: str, request: Request, tail: int = 200):
-    """SSE: live `docker logs -f` for the cEOS container backing this node.
-    Each event is one line; the connection stays open until the client
-    disconnects or the container goes away.
+@app.post("/api/devices/{host}/start", tags=["devices"])
+async def api_device_start(host: str):
+    """Start the vEOS VM inside the wrapper. Idempotent."""
+    if not HOST_RE.match(host):
+        raise HTTPException(400, "invalid host")
+    try:
+        result = await asyncio.to_thread(docker_ctl.vm_start, host)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    await _broadcast({"type": "vm_started", "host": host})
+    return result
+
+
+@app.post("/api/devices/{host}/stop", tags=["devices"])
+async def api_device_stop(host: str):
+    """Stop the vEOS VM inside the wrapper. Idempotent."""
+    if not HOST_RE.match(host):
+        raise HTTPException(400, "invalid host")
+    try:
+        result = await asyncio.to_thread(docker_ctl.vm_stop, host)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    await _broadcast({"type": "vm_stopped", "host": host})
+    return result
+
+
+@app.get("/api/devices/{host}/status", tags=["devices"])
+def api_device_status(host: str):
+    if not HOST_RE.match(host):
+        raise HTTPException(400, "invalid host")
+    return {"host": host, "vm_status": docker_ctl.vm_status(host)}
+
+
+def _strip_telnet_iac(buf: bytes) -> bytes:
+    """Strip RFC 854 telnet IAC sequences (negotiation, subneg). Returns
+    a clean byte string + a leftover tail (an incomplete sequence at the
+    end of buf that we should re-prepend on the next read).
+    """
+    out = bytearray()
+    i = 0
+    while i < len(buf):
+        b = buf[i]
+        if b != 0xff:
+            out.append(b)
+            i += 1
+            continue
+        # IAC; need at least one more byte
+        if i + 1 >= len(buf):
+            break  # tail
+        cmd = buf[i + 1]
+        if cmd == 0xff:
+            out.append(0xff)
+            i += 2
+        elif cmd in (0xfb, 0xfc, 0xfd, 0xfe):  # WILL/WONT/DO/DONT + opt
+            if i + 2 >= len(buf):
+                break  # tail
+            i += 3
+        elif cmd == 0xfa:  # subneg, skip to IAC SE (FF F0)
+            end = buf.find(b"\xff\xf0", i + 2)
+            if end == -1:
+                break  # tail
+            i = end + 2
+        else:
+            i += 2  # other 2-byte command
+    tail = bytes(buf[i:])
+    return bytes(out), tail
+
+
+@app.get("/api/devices/{host}/console/stream", tags=["devices"])
+async def api_device_console_stream(host: str, request: Request):
+    """SSE: stream the VM's serial console.
+
+    QEMU's `-serial telnet:0.0.0.0:5000,server,nowait` chardev gets into
+    a stuck "no listener" state after a few client connect/disconnects.
+    Instead of opening our own TCP socket to the wrapper, we run
+    `docker exec wrapper telnet localhost 5000` inside the wrapper —
+    same path that `make console-<node>` uses, which is reliable. The
+    docker SDK gives us a generator over the exec's stdout.
     """
     if not HOST_RE.match(host):
         raise HTTPException(400, "invalid host")
-    cli = docker_ctl._client()
-    container_name = f"clab-{docker_ctl.LAB_NAME}-{host}"
-    try:
-        c = cli.containers.get(container_name)
-    except Exception:
+    node = next((n for n in docker_ctl.list_ceos_nodes() if n["name"] == host), None)
+    if node is None:
         raise HTTPException(404, "no such device")
+
+    cli = docker.from_env()
+    try:
+        c = cli.containers.get(node["container"])
+    except docker.errors.NotFound:
+        raise HTTPException(404, "wrapper container not found")
+
+    # `tail -F` the launcher's persistent console capture. The launcher
+    # holds the single TCP connection to QEMU's telnet (which only
+    # accepts one client at a time) and appends to this file; we follow
+    # it here. Multiple browsers can watch concurrently.
+    exec_id = cli.api.exec_create(
+        c.id,
+        ["sh", "-c", "tail -n +1 -F /tmp/qemu-console.log 2>/dev/null"],
+        stdout=True, stderr=True, tty=False,
+    )["Id"]
+    log_stream = cli.api.exec_start(exec_id, stream=True, demux=False)
 
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue(maxsize=4096)
-    log_stream = c.logs(
-        stream=True, follow=True, tail=tail, stdout=True, stderr=True
-    )
 
     def reader():
-        # docker streams data in tiny chunks (often single bytes for terminal
-        # output); buffer until a complete line, strip ANSI, then enqueue.
         buf = b""
+        line_buf = b""
         try:
             for chunk in log_stream:
                 if not chunk:
                     continue
                 buf += chunk
-                while b"\n" in buf:
-                    line, _, buf = buf.partition(b"\n")
+                cleaned, buf = _strip_telnet_iac(buf)
+                line_buf += cleaned
+                while b"\n" in line_buf:
+                    line, _, line_buf = line_buf.partition(b"\n")
                     text = ANSI_RE.sub(b"", line).decode("utf-8", errors="replace").rstrip("\r")
                     if not queue.full():
                         loop.call_soon_threadsafe(queue.put_nowait, text)
-            if buf:
-                text = ANSI_RE.sub(b"", buf).decode("utf-8", errors="replace").rstrip("\r")
-                if text and not queue.full():
-                    loop.call_soon_threadsafe(queue.put_nowait, text)
         except Exception:
             pass
         finally:
-            try:
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-            except Exception:
-                pass
+            try: loop.call_soon_threadsafe(queue.put_nowait, None)
+            except Exception: pass
 
     threading.Thread(target=reader, daemon=True).start()
 
@@ -416,8 +512,9 @@ async def api_device_logs_stream(host: str, request: Request, tail: int = 200):
                     return
                 yield f"data: {item}\n\n"
         finally:
+            # Kill the in-container `tail -F` so the exec stream ends.
             try:
-                log_stream.close()
+                c.exec_run(["pkill", "-f", "tail -n +1 -F /tmp/qemu-console.log"])
             except Exception:
                 pass
 
@@ -444,15 +541,46 @@ async def api_device_apply_config(host: str):
 
 # ---------- EOS images / per-device target ----------
 
-def _list_eos_images() -> list[dict]:
-    if not EOS_IMAGES_ROOT.exists():
+def _list_images_for_vendor(vendor: str) -> list[dict]:
+    """List image files for one vendor (Arista .swi or Cisco .qcow2/.bin/.iso).
+    Each entry carries its vendor so the UI can filter the dropdown.
+    """
+    root = _IMAGE_DIR_BY_VENDOR.get(vendor)
+    if root is None or not root.exists():
         return []
     out = []
-    for p in sorted(EOS_IMAGES_ROOT.iterdir()):
-        if p.is_file() and p.suffix == ".swi":
+    for p in sorted(root.iterdir()):
+        if p.is_file() and EOS_IMAGE_RE.match(p.name):
             st = p.stat()
-            out.append({"filename": p.name, "size": st.st_size, "mtime": st.st_mtime})
+            out.append({
+                "filename": p.name,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+                "vendor": vendor,
+            })
     return out
+
+
+def _list_eos_images() -> list[dict]:
+    """Aggregate images across every vendor — backward-compatible name
+    (still called eos-images on the API). The UI keys off the per-row
+    vendor field to filter the dropdown.
+    """
+    out = []
+    for vendor in _IMAGE_DIR_BY_VENDOR:
+        out.extend(_list_images_for_vendor(vendor))
+    return out
+
+
+def _resolve_image_path(filename: str) -> Path | None:
+    """Locate `filename` under any vendor's image dir."""
+    for root in _IMAGE_DIR_BY_VENDOR.values():
+        if not root.exists():
+            continue
+        p = root / filename
+        if p.exists():
+            return p
+    return None
 
 
 @app.get("/api/eos-images", tags=["eos-images"])
@@ -462,11 +590,11 @@ def api_eos_images():
 
 @app.get("/eos-images/{filename}", tags=["eos-images"])
 def serve_eos_image(filename: str):
-    """Serve a .swi image to a device during ZTP."""
+    """Serve an EOS .swi or IOS-XE .qcow2/.bin/.iso to a device during ZTP."""
     if not EOS_IMAGE_RE.match(filename):
         raise HTTPException(400, "bad filename")
-    p = EOS_IMAGES_ROOT / filename
-    if not p.exists():
+    p = _resolve_image_path(filename)
+    if p is None:
         raise HTTPException(404, "no such image")
     return FileResponse(p, media_type="application/octet-stream", filename=filename)
 
@@ -504,8 +632,8 @@ async def api_device_eos_image_set(host: str, body: DeviceEosImageUpdate):
     img = (body.eos_image or "").strip() or None
     if img is not None:
         if not EOS_IMAGE_RE.match(img):
-            raise HTTPException(400, "eos_image must be a .swi filename")
-        if not (EOS_IMAGES_ROOT / img).exists():
+            raise HTTPException(400, "eos_image must be a recognized image filename")
+        if _resolve_image_path(img) is None:
             raise HTTPException(404, f"no such image on server: {img}")
     db.set_device_eos_image(host, img)
     await _broadcast({"type": "eos_image_changed", "host": host, "eos_image": img})

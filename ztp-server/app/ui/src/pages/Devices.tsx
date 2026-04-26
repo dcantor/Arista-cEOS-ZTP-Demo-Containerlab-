@@ -3,13 +3,47 @@ import { Link } from "react-router-dom";
 import { api, Device, EosImage } from "../api";
 import { useSSE } from "../hooks/useSSE";
 import StatusPill from "../components/StatusPill";
-import LogDrawer from "../components/LogDrawer";
+import LogDrawer, { View } from "../components/LogDrawer";
+
+// All Action-column buttons share the same min width so the column is
+// visually aligned across rows even when only a subset of buttons is
+// shown for a given row.
+const BTN = "w-24 px-2 py-1 rounded text-xs text-center";
 
 export default function Devices() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [images, setImages] = useState<EosImage[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [viewerHost, setViewerHost] = useState<string | null>(null);
+  const [views, setViews] = useState<View[]>([]);
+  const [activeIdx, setActiveIdx] = useState<number>(0);
+
+  const openConsole = (host: string) => {
+    setViews((vs) => {
+      const i = vs.findIndex((v) => v.host === host);
+      if (i >= 0) {
+        setActiveIdx(i);
+        return vs;
+      }
+      setActiveIdx(vs.length);
+      return [...vs, { host }];
+    });
+  };
+  const closeView = (idx: number) => {
+    setViews((vs) => {
+      const next = vs.filter((_, i) => i !== idx);
+      setActiveIdx((cur) => {
+        if (next.length === 0) return 0;
+        if (cur === idx) return Math.min(idx, next.length - 1);
+        if (cur > idx) return cur - 1;
+        return cur;
+      });
+      return next;
+    });
+  };
+  const closeAllViews = () => {
+    setViews([]);
+    setActiveIdx(0);
+  };
 
   const refresh = () => {
     api.devices().then(setDevices).catch((e) => setError(String(e)));
@@ -32,8 +66,10 @@ export default function Devices() {
           <thead className="bg-slate-900 text-slate-400 text-left">
             <tr>
               <th className="px-3 py-2">Node</th>
+              <th className="px-3 py-2">Vendor</th>
               <th className="px-3 py-2">Source</th>
               <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">VM</th>
               <th className="px-3 py-2">ZTP</th>
               <th className="px-3 py-2">MAC</th>
               <th className="px-3 py-2">Mgmt IP</th>
@@ -46,10 +82,10 @@ export default function Devices() {
           <tbody>
             {devices.map((d) => (
               <DeviceRow key={d.name} d={d} images={images}
-                onView={setViewerHost} onChange={refresh} />
+                onView={openConsole} onChange={refresh} />
             ))}
             {devices.length === 0 && (
-              <tr><td colSpan={10} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
+              <tr><td colSpan={12} className="px-3 py-6 text-center text-slate-500">No devices yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -57,10 +93,17 @@ export default function Devices() {
 
       <AddDeviceForm onAdded={refresh} />
 
-      {viewerHost && (
+      {views.length > 0 && (
         <>
+          {/* spacer so the table doesn't sit under the drawer */}
           <div className="h-[45vh]" aria-hidden />
-          <LogDrawer host={viewerHost} onClose={() => setViewerHost(null)} />
+          <LogDrawer
+            views={views}
+            activeIdx={activeIdx}
+            onActivate={setActiveIdx}
+            onClose={closeView}
+            onCloseAll={closeAllViews}
+          />
         </>
       )}
     </section>
@@ -69,7 +112,8 @@ export default function Devices() {
 
 function DeviceRow({ d, images, onView, onChange }: {
   d: Device; images: EosImage[];
-  onView: (h: string) => void; onChange: () => void;
+  onView: (host: string) => void;
+  onChange: () => void;
 }) {
   const isManaged = d.source === "managed";
   const [editing, setEditing] = useState(false);
@@ -104,6 +148,27 @@ function DeviceRow({ d, images, onView, onChange }: {
       onChange();
     } catch (err) { alert(`Failed: ${err}`); }
   };
+  const startVm = async () => {
+    setBusy(true);
+    try { await api.startVm(d.name); onChange(); }
+    catch (e) { alert(`Failed: ${e}`); }
+    finally { setBusy(false); }
+  };
+  const stopVm = async () => {
+    if (!confirm(`Stop ${d.name}? The VM will shut down (config persists in overlay).`)) return;
+    setBusy(true);
+    try { await api.stopVm(d.name); onChange(); }
+    catch (e) { alert(`Failed: ${e}`); }
+    finally { setBusy(false); }
+  };
+  const vmStatus = d.vm_status ?? (d.container ? "stopped" : "unknown");
+  const vmPill = (
+    <span className={`inline-block px-2 py-0.5 text-xs border rounded mono ${
+      vmStatus === "running" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+      : vmStatus === "stopped" ? "bg-slate-700/40 text-slate-300 border-slate-600"
+      : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+    }`}>{vmStatus}</span>
+  );
   const sourceBadge = (
     <span className={`px-2 py-0.5 text-[10px] rounded mono border ${
       d.source === "topology" ? "bg-sky-500/10 text-sky-300 border-sky-500/40"
@@ -117,8 +182,18 @@ function DeviceRow({ d, images, onView, onChange }: {
       <td className="px-3 py-2 mono">
         <Link to={`/devices/${d.name}`} className="text-sky-300 hover:underline">{d.name}</Link>
       </td>
+      <td className="px-3 py-2">
+        <span className={`px-2 py-0.5 text-[10px] rounded mono border ${
+          d.vendor === "cisco"
+            ? "bg-orange-500/10 text-orange-300 border-orange-500/40"
+          : d.vendor === "nexus"
+            ? "bg-violet-500/10 text-violet-300 border-violet-500/40"
+            : "bg-cyan-500/10 text-cyan-300 border-cyan-500/40"
+        }`}>{d.vendor ?? "arista"}</span>
+      </td>
       <td className="px-3 py-2">{sourceBadge}</td>
       <td className="px-3 py-2">{d.status}</td>
+      <td className="px-3 py-2">{vmPill}</td>
       <td className="px-3 py-2"><StatusPill event={d.last_event} /></td>
       <td className="px-3 py-2 mono">
         {editing && isManaged ? (
@@ -141,43 +216,78 @@ function DeviceRow({ d, images, onView, onChange }: {
         ) : (d.ip ?? "-")}
       </td>
       <td className="px-3 py-2">
-        <select
-          value={d.eos_image ?? ""}
-          onChange={onImageChange}
-          className="mono text-xs bg-slate-900 border border-slate-700 rounded px-2 py-1"
-          title="EOS image to flash on next ZTP. '(skip upgrade)' = leave the running image alone."
-        >
-          <option value="">(skip upgrade)</option>
-          {images.map((img) => (
-            <option key={img.filename} value={img.filename}>{img.filename}</option>
-          ))}
-        </select>
+        {(() => {
+          const vend = d.vendor ?? "arista";
+          // Only show images that match this device's vendor; managed
+          // rows (no vendor known) get the full list.
+          const opts = d.source === "managed"
+            ? images
+            : images.filter((img) => (img.vendor ?? "arista") === vend);
+          return (
+            <select
+              value={d.eos_image ?? ""}
+              onChange={onImageChange}
+              className="mono text-xs bg-slate-900 border border-slate-700 rounded px-2 py-1"
+              title={`Image to flash on next ZTP. (skip upgrade) leaves the running image alone. Filtered to ${vend}.`}
+            >
+              <option value="">(skip upgrade)</option>
+              {opts.map((img) => (
+                <option key={img.filename} value={img.filename}>{img.filename}</option>
+              ))}
+            </select>
+          );
+        })()}
       </td>
       <td className="px-3 py-2 mono text-xs text-slate-400">{d.last_seen ?? "-"}</td>
       <td className="px-3 py-2">{d.event_count ?? 0}</td>
       <td className="px-3 py-2 text-right">
         <div className="flex justify-end gap-2">
+          {d.container && !editing && vmStatus !== "running" && (
+            <button
+              onClick={startVm}
+              disabled={busy}
+              className={`${BTN} bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50`}
+              title="Start the VM in this wrapper"
+            >
+              {busy ? "…" : "Start"}
+            </button>
+          )}
+          {d.container && !editing && vmStatus === "running" && (
+            <button
+              onClick={stopVm}
+              disabled={busy}
+              className={`${BTN} bg-amber-600 hover:bg-amber-500 disabled:opacity-50`}
+              title="Stop the VM (graceful, then SIGKILL after 15 s)"
+            >
+              {busy ? "…" : "Stop"}
+            </button>
+          )}
           {d.container && !editing && (
             <button
               onClick={() => onView(d.name)}
-              className="px-2 py-1 rounded text-xs bg-emerald-600 hover:bg-emerald-500"
-              title="Stream live docker logs for this device"
+              disabled={vmStatus !== "running"}
+              className={`${BTN} bg-violet-600 hover:bg-violet-500 disabled:opacity-40`}
+              title={
+                vmStatus === "running"
+                  ? "Stream the VM's serial console (BIOS/GRUB/OS boot, ZTP/POAP, EOS/IOS prompts)."
+                  : "Start the VM first to access its serial console."
+              }
             >
-              Live ZTP Viewer
+              VM Console
             </button>
           )}
           {isManaged && !editing && (
             <>
               <button
                 onClick={startEdit}
-                className="px-2 py-1 rounded text-xs bg-sky-600 hover:bg-sky-500"
+                className={`${BTN} bg-sky-600 hover:bg-sky-500`}
                 title="Edit MAC and mgmt IP for this device"
               >
                 Edit
               </button>
               <button
                 onClick={remove}
-                className="px-2 py-1 rounded text-xs bg-rose-600 hover:bg-rose-500"
+                className={`${BTN} bg-rose-600 hover:bg-rose-500`}
                 title="Remove this device from dnsmasq"
               >
                 Delete
@@ -189,14 +299,14 @@ function DeviceRow({ d, images, onView, onChange }: {
               <button
                 onClick={saveEdit}
                 disabled={busy}
-                className="px-2 py-1 rounded text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
+                className={`${BTN} bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50`}
               >
                 {busy ? "Saving…" : "Save"}
               </button>
               <button
                 onClick={cancelEdit}
                 disabled={busy}
-                className="px-2 py-1 rounded text-xs border border-slate-700 hover:bg-slate-800"
+                className={`${BTN} border border-slate-700 hover:bg-slate-800`}
               >
                 Cancel
               </button>

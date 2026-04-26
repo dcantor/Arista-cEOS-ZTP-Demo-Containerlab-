@@ -7,9 +7,21 @@ import docker
 
 CLAB_LABEL = "clab-node-name"
 LAB_NAME = "ztp-universal-demo"
-# Short names of the vEOS nodes in the topology. Used to find/enumerate
-# them since the containers are kind:linux and don't self-identify as EOS.
-VEOS_NODES = ("spine1", "spine2", "leaf1", "leaf2")
+# Per-vendor static map of topology node -> vendor. Enumerated explicitly
+# (rather than parsed from topology.clab.yml at runtime) because the file
+# isn't bind-mounted into the app container.
+TOPOLOGY_VENDORS = {
+    "spine1":  "arista",
+    "spine2":  "arista",
+    "leaf1":   "arista",
+    "leaf2":   "arista",
+    "leaf101": "cisco",   # CSR1000v / IOS-XE
+    "leaf201": "nexus",   # Nexus 9300v / NX-OS
+}
+# Short names of the *topology* nodes (any vendor). Used to enumerate
+# devices since the wrapper containers are kind:linux and don't
+# self-identify as a network OS.
+VEOS_NODES = tuple(TOPOLOGY_VENDORS.keys())
 
 
 def _client():
@@ -34,6 +46,7 @@ def list_ceos_nodes() -> list[dict]:
             "name": node,
             "container": c.name,
             "status": c.status,
+            "vendor": TOPOLOGY_VENDORS.get(node, "arista"),
             # The Docker-assigned MAC on the wrapper is meaningless for the
             # VM; the VM synthesizes its own MAC deterministically from the
             # node name. Report the wrapper's MAC for transparency.
@@ -41,6 +54,51 @@ def list_ceos_nodes() -> list[dict]:
             "ip": net.get("IPAddress"),
         })
     return sorted(out, key=lambda n: n["name"])
+
+
+def _exec(short_name: str, cmd: list[str]) -> tuple[int, str]:
+    """Helper: docker exec a command in the named lab container, return (rc, stdout+stderr)."""
+    cli = _client()
+    container_name = f"clab-{LAB_NAME}-{short_name}"
+    try:
+        c = cli.containers.get(container_name)
+    except docker.errors.NotFound:
+        raise ValueError(f"unknown node: {short_name}")
+    rc, out = c.exec_run(cmd)
+    return rc, (out.decode("utf-8", errors="replace") if out else "")
+
+
+def vm_start(node_name: str) -> dict:
+    """Start the vEOS VM inside the named wrapper container (idempotent)."""
+    rc, out = _exec(node_name, ["/usr/local/bin/vm-start.sh"])
+    if rc != 0:
+        raise RuntimeError(f"vm-start failed (rc={rc}): {out.strip()}")
+    return {"node": node_name, "vm_status": "running", "output": out.strip()}
+
+
+def vm_stop(node_name: str) -> dict:
+    """Stop the vEOS VM (graceful SIGTERM, then SIGKILL after 15 s)."""
+    rc, out = _exec(node_name, ["/usr/local/bin/vm-stop.sh"])
+    if rc != 0:
+        raise RuntimeError(f"vm-stop failed (rc={rc}): {out.strip()}")
+    return {"node": node_name, "vm_status": "stopped", "output": out.strip()}
+
+
+def vm_status(node_name: str) -> str:
+    """Return 'running', 'stopped', or 'unknown' (container not present)."""
+    try:
+        rc, out = _exec(node_name, ["/usr/local/bin/vm-status.sh"])
+    except ValueError:
+        return "unknown"
+    if rc != 0:
+        return "unknown"
+    s = out.strip()
+    return s if s in ("running", "stopped") else "unknown"
+
+
+def vm_status_all() -> dict[str, str]:
+    """Return {node_name: status} for every lab vEOS wrapper."""
+    return {n: vm_status(n) for n in VEOS_NODES}
 
 
 def container_logs(short_name: str, tail: int = 5000) -> bytes | None:
@@ -62,7 +120,17 @@ def apply_config(node_name: str, server_url: str = "http://172.30.0.20") -> dict
     server is currently serving, then save it to startup-config. Uses
     eAPI (HTTP JSON-RPC) over the device's post-ZTP management IP. No
     VM reboot, no container restart.
+
+    Arista-only: Cisco IOS-XE / NX-OS have no eAPI. To regenerate a
+    Cisco device's config you currently need to Stop+Start it (which
+    re-runs ZTP / POAP).
     """
+    vendor = TOPOLOGY_VENDORS.get(node_name, "arista")
+    if vendor != "arista":
+        raise ValueError(
+            f"apply-config (live) is Arista-only; {node_name} is "
+            f"{vendor}. Stop+Start to re-run ZTP/POAP."
+        )
     # Resolve mgmt IP: topology nodes have static post-ZTP IPs; managed
     # devices come from the SQLite table (added via the UI).
     topology_ip_by_node = {

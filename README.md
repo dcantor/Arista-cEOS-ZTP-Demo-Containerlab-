@@ -1,5 +1,7 @@
 # Arista vEOS ZTP Demo (Containerlab)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 End-to-end Zero Touch Provisioning lab for Arista **vEOS** (the full
 QEMU/KVM virtual machine), with a built-in web dashboard. Four switches
 (2 spines + 2 leaves) boot from a fresh qcow2 overlay with **no
@@ -7,6 +9,14 @@ startup-config**, broadcast DHCP on Management1, and pull per-device
 configuration from the ZTP server. The whole stack — DHCP server,
 ZTP/UI app, and the four vEOS VMs — comes up with a single
 `containerlab deploy`.
+
+> **You must supply your own Arista images.** This repo is MIT-licensed
+> but **does not include** the proprietary `vEOS-lab-X.Y.Z.qcow2` boot
+> disk or any `.swi` software images. Download them yourself from the
+> Arista support site (a free arista.com account is enough) and drop
+> them into the project root (`vEOS-lab-*.qcow2`) and `eos_images/`
+> respectively. Both paths are gitignored so they never accidentally
+> end up in your fork. See [LICENSE](LICENSE) for details.
 
 > Earlier revisions of this lab used cEOS-lab containers. We migrated to
 > vEOS to get a real, full-feature EOS image (no `reload now` block, no
